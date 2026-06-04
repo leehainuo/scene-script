@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	userFieldNames        = "id, username, email, password, created_at, updated_at"
+	userFieldNames = "id, username, email, password, created_at, updated_at"
 )
 
 type User struct {
@@ -45,7 +45,7 @@ func NewUserModel(conn sqlx.SqlConn) UserModel {
 	return &customUserModel{
 		defaultUserModel: &defaultUserModel{
 			conn:  conn,
-			table: "sys_user",
+			table: "ss_user",
 		},
 	}
 }

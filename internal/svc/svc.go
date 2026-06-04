@@ -16,11 +16,14 @@ type ServiceContext struct {
 	Token  *token.Manager
 
 	// Models
-	UserModel    model.UserModel
+	UserModel          model.UserModel
+	ScriptTaskModel    model.ScriptTaskModel
+	ScriptChapterModel model.ScriptChapterModel
+	ScriptResultModel  model.ScriptResultModel
 }
 
 func NewServiceContext(c *config.Config) (*ServiceContext, error) {
-	// Init database connection via sqlconn (go-zero compatible)
+
 	conn, err := sqlx.NewMysql(
 		c.MySQL.DSN(),
 		sqlx.WithMaxOpenConns(c.MySQL.MaxOpenConns),
@@ -46,6 +49,9 @@ func NewServiceContext(c *config.Config) (*ServiceContext, error) {
 		Token:  m,
 
 		// Init models with SqlConn interface
-		UserModel:    model.NewUserModel(conn),
+		UserModel: model.NewUserModel(conn),
+		ScriptTaskModel: model.NewScriptTaskModel(conn),
+		ScriptChapterModel: model.NewScriptChapterModel(conn),
+		ScriptResultModel: model.NewScriptResultModel(conn),
 	}, nil
 }
