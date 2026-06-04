@@ -18,11 +18,13 @@ const baseURL = isDev && !API_BASE_URL
 // Token Storage Keys
 const ACCESS_TOKEN_KEY = "access_token"
 const REFRESH_TOKEN_KEY = "refresh_token"
+export const DEFAULT_REQUEST_TIMEOUT = 10000
+export const LONG_TASK_REQUEST_TIMEOUT = 180000
 
 // Create Axios Instance
 const client = axios.create({
   baseURL,
-  timeout: 10000,
+  timeout: DEFAULT_REQUEST_TIMEOUT,
   headers: {
     "Content-Type": "application/json",
   },
