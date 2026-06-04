@@ -54,6 +54,11 @@ type GetScriptReq struct {
 	ID string `json:"id" validate:"required,max=64"`
 }
 
+type SaveScriptResultReq struct {
+	ID   string `json:"id" validate:"required,max=64"`
+	YAML string `json:"yaml" validate:"required"`
+}
+
 type ScriptTaskMeta struct {
 	ID             string    `json:"id"`
 	Title          string    `json:"title"`

@@ -51,5 +51,6 @@ func registerScriptRoutes(r *gin.RouterGroup, svc *svc.ServiceContext) {
 		scripts.POST("/convert", script.ConvertScriptHandler(svc))
 		scripts.GET("", script.ListScriptHandler(svc))
 		scripts.GET("/:id", script.GetScriptHandler(svc))
+		scripts.PUT("/:id/result", script.SaveScriptResultHandler(svc))
 	}
 }
