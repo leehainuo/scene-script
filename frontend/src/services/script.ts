@@ -1,6 +1,7 @@
 import client, { LONG_TASK_REQUEST_TIMEOUT } from "@/lib/axios"
 import type {
   ApiResponse,
+  SaveScriptResultRequest,
   ScriptConvertRequest,
   ScriptConvertResponse,
   ScriptDetailResponse,
@@ -29,6 +30,17 @@ export const getScriptHistory = async (params?: ScriptListParams) => {
 export const getScriptDetail = async (id: string) => {
   const response = await client.get<ApiResponse<ScriptDetailResponse>>(
     `/script/${id}`
+  )
+  return response.data
+}
+
+export const saveScriptResult = async (
+  id: string,
+  data: SaveScriptResultRequest
+) => {
+  const response = await client.put<ApiResponse<ScriptDetailResponse>>(
+    `/script/${id}/result`,
+    data
   )
   return response.data
 }

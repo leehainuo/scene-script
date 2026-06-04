@@ -146,6 +146,10 @@ export interface ScriptDetailResponse {
   metadata: ScriptTaskMeta
 }
 
+export interface SaveScriptResultRequest {
+  yaml: string
+}
+
 export interface ScriptListParams extends PaginationParams {
   status?: "all" | "pending" | "running" | "succeeded" | "failed"
 }

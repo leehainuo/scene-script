@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ComponentProps } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import {
   ChevronDown,
   ChevronRight,
   Check,
+  CircleCheckBig,
   Copy,
   Download,
   FileText,
@@ -31,7 +32,14 @@ import {
 } from "@/lib/script-yaml"
 import { cn } from "@/lib/utils"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
-import { convertScript, getScriptDetail, getScriptHistory, logout } from "@/services"
+import { toast } from "sonner"
+import {
+  convertScript,
+  getScriptDetail,
+  getScriptHistory,
+  logout,
+  saveScriptResult,
+} from "@/services"
 import { useAuthStore } from "@/stores"
 import type {
   ScriptBeat,
@@ -160,6 +168,13 @@ function formatDateTime(value?: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date)
+}
+
+function replaceLiteralText(source: string, from: string, to: string) {
+  if (!from || from === to || !source.includes(from)) {
+    return source
+  }
+  return source.split(from).join(to)
 }
 
 function createDefaultDraft(): ScriptConvertRequest {
@@ -405,6 +420,112 @@ function extractErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
+function getHumanFieldName(path: string) {
+  const topLevelFields: Record<string, string> = {
+    version: "版本号",
+    metadata: "元数据",
+    "metadata.title": "剧本标题",
+    "metadata.author": "作者",
+    "metadata.genre": "体裁",
+    "metadata.tone": "语气",
+    "metadata.pacing": "节奏",
+    "metadata.source_chapters": "章节数量",
+  }
+
+  if (topLevelFields[path]) {
+    return topLevelFields[path]
+  }
+
+  const characterMatch = path.match(/^dramatis_personae\[(\d+)\]\.(.+)$/)
+  if (characterMatch) {
+    const index = Number(characterMatch[1]) + 1
+    const fieldMap: Record<string, string> = {
+      name: "角色名",
+      archetype: "角色类型",
+      motivation: "角色动机",
+      first_appearance: "首次出现",
+    }
+    return `人物表第 ${index} 项${fieldMap[characterMatch[2]] ?? characterMatch[2]}`
+  }
+
+  const settingMatch = path.match(/^settings\[(\d+)\]\.(.+)$/)
+  if (settingMatch) {
+    const index = Number(settingMatch[1]) + 1
+    const fieldMap: Record<string, string> = {
+      name: "地点名",
+      description: "地点描述",
+      importance: "重要程度",
+    }
+    return `地点表第 ${index} 项${fieldMap[settingMatch[2]] ?? settingMatch[2]}`
+  }
+
+  const beatMatch = path.match(
+    /^chapters\[(\d+)\]\.scenes\[(\d+)\]\.beats\[(\d+)\]\.(.+)$/
+  )
+  if (beatMatch) {
+    const chapter = Number(beatMatch[1]) + 1
+    const scene = Number(beatMatch[2]) + 1
+    const beat = Number(beatMatch[3]) + 1
+    const fieldMap: Record<string, string> = {
+      summary: "节拍摘要",
+      type: "节拍类型",
+      "dialogue.speaker": "对白角色",
+      "dialogue.content": "对白内容",
+    }
+    return `第 ${chapter} 章第 ${scene} 个场景第 ${beat} 个节拍的${
+      fieldMap[beatMatch[4]] ?? beatMatch[4]
+    }`
+  }
+
+  const sceneMatch = path.match(/^chapters\[(\d+)\]\.scenes\[(\d+)\]\.(.+)$/)
+  if (sceneMatch) {
+    const chapter = Number(sceneMatch[1]) + 1
+    const scene = Number(sceneMatch[2]) + 1
+    const fieldMap: Record<string, string> = {
+      title: "场景标题",
+      goal: "场景目标",
+      location: "场景地点",
+      time: "时间",
+      pov: "视角角色",
+      mood: "氛围",
+      outcome: "场景收尾",
+    }
+    return `第 ${chapter} 章第 ${scene} 个场景的${
+      fieldMap[sceneMatch[3]] ?? sceneMatch[3]
+    }`
+  }
+
+  const chapterMatch = path.match(/^chapters\[(\d+)\]\.(.+)$/)
+  if (chapterMatch) {
+    const chapter = Number(chapterMatch[1]) + 1
+    const fieldMap: Record<string, string> = {
+      title: "章节标题",
+      summary: "章节梗概",
+    }
+    return `第 ${chapter} 章的${fieldMap[chapterMatch[2]] ?? chapterMatch[2]}`
+  }
+
+  return ""
+}
+
+function formatSchemaValidationMessage(message: string) {
+  const requiredMatch = message.match(/([a-zA-Z0-9_.[\]]+) is required/)
+  if (requiredMatch) {
+    const label = getHumanFieldName(requiredMatch[1])
+    return label ? `${label}为必填项，请补充后再保存。` : "还有必填项未填写，请补充后再保存。"
+  }
+
+  if (message.includes("must be one of")) {
+    return "有字段填写格式不正确，请检查后再保存。"
+  }
+
+  if (message.includes("yaml parse failed")) {
+    return "当前剧本内容格式有误，请检查后再保存。"
+  }
+
+  return message
+}
+
 export default function ScriptWorkshopPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -429,6 +550,7 @@ export default function ScriptWorkshopPage() {
     return createDefaultDraft()
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const [isHistoryLoading, setIsHistoryLoading] = useState(false)
   const [statusFilters, setStatusFilters] = useState<ScriptTaskStatus[]>([])
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false)
@@ -447,6 +569,8 @@ export default function ScriptWorkshopPage() {
   const [draggedBeatId, setDraggedBeatId] = useState<string | null>(null)
   const [dragOverBeatId, setDragOverBeatId] = useState<string | null>(null)
   const statusMenuRef = useRef<HTMLDivElement | null>(null)
+  const characterRenameOriginRef = useRef<Record<number, string>>({})
+  const settingRenameOriginRef = useRef<Record<number, string>>({})
 
   useEffect(() => {
     localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft))
@@ -455,6 +579,21 @@ export default function ScriptWorkshopPage() {
   useEffect(() => {
     void loadHistory()
   }, [])
+
+  useEffect(() => {
+    const taskIdFromQuery = searchParams.get("id")
+    const viewFromQuery = searchParams.get("view")
+
+    if (viewFromQuery !== "detail" || !taskIdFromQuery) {
+      return
+    }
+
+    if (selectedTaskId === taskIdFromQuery && activeResult?.id === taskIdFromQuery) {
+      return
+    }
+
+    void loadDetailById(taskIdFromQuery)
+  }, [searchParams, selectedTaskId, activeResult?.id])
 
   useEffect(() => {
     if (!isSubmitting) return
@@ -494,6 +633,41 @@ export default function ScriptWorkshopPage() {
       setIsHistoryLoading(false)
     }
   }
+
+  const loadDetailById = useCallback(async (taskId: string, successMessage?: string) => {
+    setSelectedTaskId(taskId)
+    setError("")
+    setFeedback("")
+
+    try {
+      const response = await getScriptDetail(taskId)
+      if (response.code !== 0 || !response.data) {
+        setError(response.msg || "历史详情加载失败。")
+        return
+      }
+
+      const detail = response.data
+      const result = makeResultFromDetail(detail)
+      if (result) {
+        setResultForEditing(result)
+        setSelectedNodeId(null)
+        setSearchParams({ view: "detail", id: taskId })
+        setView("overview")
+        if (successMessage) {
+          setFeedback(successMessage)
+        }
+      } else {
+        setResultForEditing(null)
+        setFeedback(
+          detail.metadata.status === "failed"
+            ? `该任务生成失败：${detail.metadata.err_msg || "请重试"}`
+            : "该任务仍在处理中，请稍后刷新。"
+        )
+      }
+    } catch (err) {
+      setError(extractErrorMessage(err, "历史详情加载失败。"))
+    }
+  }, [setSearchParams])
 
   async function handleLogout() {
     try {
@@ -641,19 +815,40 @@ export default function ScriptWorkshopPage() {
       ...current,
       chapters: current.chapters.map((chapter) => ({
         ...chapter,
+        summary: replaceLiteralText(chapter.summary, previous, currentName),
         scenes: chapter.scenes.map((scene) => ({
           ...scene,
           pov: scene.pov === previous ? currentName : scene.pov,
+          goal: replaceLiteralText(scene.goal, previous, currentName),
+          outcome: replaceLiteralText(scene.outcome, previous, currentName),
           beats: scene.beats.map((beat) =>
             beat.dialogue?.speaker === previous
               ? {
                   ...beat,
+                  summary: replaceLiteralText(beat.summary, previous, currentName),
                   dialogue: {
                     speaker: currentName,
-                    content: beat.dialogue.content,
+                    content: replaceLiteralText(
+                      beat.dialogue.content,
+                      previous,
+                      currentName
+                    ),
                   },
                 }
-              : beat
+              : {
+                  ...beat,
+                  summary: replaceLiteralText(beat.summary, previous, currentName),
+                  dialogue: beat.dialogue
+                    ? {
+                        speaker: beat.dialogue.speaker,
+                        content: replaceLiteralText(
+                          beat.dialogue.content,
+                          previous,
+                          currentName
+                        ),
+                      }
+                    : beat.dialogue,
+                }
           ),
         })),
       })),
@@ -671,9 +866,26 @@ export default function ScriptWorkshopPage() {
       ...current,
       chapters: current.chapters.map((chapter) => ({
         ...chapter,
+        summary: replaceLiteralText(chapter.summary, previous, currentName),
         scenes: chapter.scenes.map((scene) => ({
           ...scene,
           location: scene.location === previous ? currentName : scene.location,
+          goal: replaceLiteralText(scene.goal, previous, currentName),
+          outcome: replaceLiteralText(scene.outcome, previous, currentName),
+          beats: scene.beats.map((beat) => ({
+            ...beat,
+            summary: replaceLiteralText(beat.summary, previous, currentName),
+            dialogue: beat.dialogue
+              ? {
+                  speaker: beat.dialogue.speaker,
+                  content: replaceLiteralText(
+                    beat.dialogue.content,
+                    previous,
+                    currentName
+                  ),
+                }
+              : beat.dialogue,
+          })),
         })),
       })),
     }))
@@ -751,7 +963,7 @@ export default function ScriptWorkshopPage() {
       setResultForEditing(result)
       setSelectedTaskId(result.id)
       setSelectedNodeId(null)
-      setSearchParams({ view: "detail" })
+      setSearchParams({ view: "detail", id: result.id })
       setView("overview")
       setFeedback("第一版剧本舞台已经搭好，你可以继续看结构、复制 YAML 或回载历史。")
       await loadHistory()
@@ -764,36 +976,7 @@ export default function ScriptWorkshopPage() {
   }
 
   async function handleLoadHistory(item: ScriptHistoryItem) {
-    setSelectedTaskId(item.id)
-    setError("")
-    setFeedback("")
-
-    try {
-      const response = await getScriptDetail(item.id)
-      if (response.code !== 0 || !response.data) {
-        setError(response.msg || "历史详情加载失败。")
-        return
-      }
-
-      const detail = response.data
-      const result = makeResultFromDetail(detail)
-      if (result) {
-        setResultForEditing(result)
-        setSelectedNodeId(null)
-        setSearchParams({ view: "detail" })
-        setView("overview")
-        setFeedback(`已载入「${detail.metadata.title}」的结果，你可以继续审阅结构。`)
-      } else {
-        setResultForEditing(null)
-        setFeedback(
-          detail.metadata.status === "failed"
-            ? `该任务生成失败：${detail.metadata.err_msg || "请重试"}`
-            : "该任务仍在处理中，请稍后刷新。"
-        )
-      }
-    } catch (err) {
-      setError(extractErrorMessage(err, "历史详情加载失败。"))
-    }
+    await loadDetailById(item.id, `已载入「${item.title}」的结果，你可以继续审阅结构。`)
   }
 
   async function handleCopyYaml() {
@@ -813,11 +996,64 @@ export default function ScriptWorkshopPage() {
     setFeedback("YAML 文件已开始下载。")
   }
 
+  async function handleSaveResult() {
+    if (!activeResult || !liveYaml) {
+      toast.error("当前没有可保存的剧本结果。")
+      return
+    }
+
+    setError("")
+    setFeedback("")
+    setIsSaving(true)
+    try {
+      const response = await saveScriptResult(activeResult.id, { yaml: liveYaml })
+      if (response.code !== 0 || !response.data) {
+        toast.error(formatSchemaValidationMessage(response.msg || "保存失败，请稍后重试。"))
+        return
+      }
+
+      const nextResult = makeResultFromDetail(response.data)
+      if (!nextResult) {
+        toast.error("保存成功，但返回结果为空。")
+        return
+      }
+
+      setResultForEditing(nextResult)
+      setSelectedTaskId(nextResult.id)
+      setSearchParams({ view: "detail", id: nextResult.id })
+      toast.success("修改已保存", {
+        icon: <CircleCheckBig className="h-5 w-5 text-green-600" />,
+        style: {
+          background: "#ffffff",
+          border: "1px solid rgba(34, 197, 94, 0.18)",
+          color: "#0f172a",
+        },
+      })
+      await loadHistory()
+    } catch (err) {
+      toast.error(
+        formatSchemaValidationMessage(
+          extractErrorMessage(err, "保存失败，请稍后重试。")
+        )
+      )
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   const semanticTree = useMemo(() => buildSemanticTree(editableDocument), [editableDocument])
   const liveYaml = useMemo(
     () => (editableDocument ? serializeScriptYaml(editableDocument) : activeResult?.yaml ?? ""),
     [editableDocument, activeResult?.yaml]
   )
+  const savedYamlBaseline = useMemo(() => {
+    if (!activeResult?.yaml) {
+      return ""
+    }
+
+    const parsed = parseScriptYaml(activeResult.yaml)
+    return parsed ? serializeScriptYaml(parsed) : activeResult.yaml
+  }, [activeResult?.yaml])
   const consistency = editableDocument
     ? normalizeConsistency(buildScriptConsistency(editableDocument))
     : activeResult?.consistencyReport ?? {
@@ -892,6 +1128,7 @@ export default function ScriptWorkshopPage() {
         characters: 0,
         settings: 0,
       }
+  const hasUnsavedChanges = Boolean(activeResult && liveYaml && liveYaml !== savedYamlBaseline)
   return (
     <div className="min-h-screen bg-[#f6f6f7] text-slate-900">
       {isSubmitting ? (
@@ -916,7 +1153,15 @@ export default function ScriptWorkshopPage() {
             items={[
               { key: "workspace", label: "工作台", icon: Wand2, onClick: () => setSearchParams({ view: "workspace" }) },
               { key: "history", label: "列表", icon: History, onClick: () => setSearchParams({ view: "history" }) },
-              { key: "detail", label: "详情", icon: FileText, onClick: () => setSearchParams({ view: "detail" }) },
+              {
+                key: "detail",
+                label: "详情",
+                icon: FileText,
+                onClick: () =>
+                  setSearchParams(
+                    selectedTaskId ? { view: "detail", id: selectedTaskId } : { view: "detail" }
+                  ),
+              },
             ]}
           />
 
@@ -1313,7 +1558,28 @@ export default function ScriptWorkshopPage() {
                       title={activeResult.metadata.title}
                       description="结果详情保持简单干净，只展示最关键的信息。"
                       actions={
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {hasUnsavedChanges ? (
+                            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
+                              有未保存修改
+                            </span>
+                          ) : null}
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleSaveResult()}
+                            disabled={isSaving || !hasUnsavedChanges}
+                            className="bg-slate-900 text-white hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
+                          >
+                            {isSaving ? (
+                              <>
+                                <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                                保存中...
+                              </>
+                            ) : (
+                              "保存修改"
+                            )}
+                          </Button>
                           {([
                             { key: "overview", label: "概览" },
                             { key: "yaml", label: "YAML" },
@@ -1886,7 +2152,7 @@ export default function ScriptWorkshopPage() {
                             <div className="space-y-3">
                               {editableDocument.dramatis_personae.map((character, index) => (
                                 <div
-                                  key={`${character.name}-${index}`}
+                                  key={`character-${index}`}
                                   className="space-y-3 rounded-[20px] border border-black/6 bg-white p-4"
                                 >
                                   <div className="grid gap-3 md:grid-cols-2">
@@ -1894,13 +2160,22 @@ export default function ScriptWorkshopPage() {
                                       <Label className="text-slate-600">角色名</Label>
                                       <Input
                                         value={character.name}
+                                        onFocus={() => {
+                                          characterRenameOriginRef.current[index] = character.name
+                                        }}
                                         onChange={(event) => {
                                           const nextName = event.target.value
                                           updateScriptCharacter(index, (item) => ({
                                             ...item,
                                             name: nextName,
                                           }))
-                                          renameCharacterReferences(character.name, nextName)
+                                        }}
+                                        onBlur={(event) => {
+                                          const previousName =
+                                            characterRenameOriginRef.current[index] ?? character.name
+                                          const nextName = event.target.value
+                                          renameCharacterReferences(previousName, nextName)
+                                          delete characterRenameOriginRef.current[index]
                                         }}
                                         placeholder="请输入角色名"
                                         className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
@@ -1995,7 +2270,7 @@ export default function ScriptWorkshopPage() {
                             <div className="space-y-3">
                               {editableDocument.settings.map((setting, index) => (
                                 <div
-                                  key={`${setting.name}-${index}`}
+                                  key={`setting-${index}`}
                                   className="space-y-3 rounded-[20px] border border-black/6 bg-white p-4"
                                 >
                                   <div className="grid gap-3 md:grid-cols-2">
@@ -2003,13 +2278,22 @@ export default function ScriptWorkshopPage() {
                                       <Label className="text-slate-600">地点名</Label>
                                       <Input
                                         value={setting.name}
+                                        onFocus={() => {
+                                          settingRenameOriginRef.current[index] = setting.name
+                                        }}
                                         onChange={(event) => {
                                           const nextName = event.target.value
                                           updateScriptSetting(index, (item) => ({
                                             ...item,
                                             name: nextName,
                                           }))
-                                          renameSettingReferences(setting.name, nextName)
+                                        }}
+                                        onBlur={(event) => {
+                                          const previousName =
+                                            settingRenameOriginRef.current[index] ?? setting.name
+                                          const nextName = event.target.value
+                                          renameSettingReferences(previousName, nextName)
+                                          delete settingRenameOriginRef.current[index]
                                         }}
                                         placeholder="请输入地点名"
                                         className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
