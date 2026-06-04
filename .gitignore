@@ -1,0 +1,46 @@
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+/server
+/next
+tmp/
+
+# Node.js
+node_modules/
+dist/
+*.log
+
+# Docker volumes
+scripts/docker/dev/volumes/mysql/*
+scripts/docker/dev/volumes/redis/*
+scripts/docker/dev/volumes/logs/*
+
+# Environment
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.iml
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Temp
+tmp/
+*.tmp
