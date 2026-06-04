@@ -8,6 +8,7 @@ import {
   Copy,
   Download,
   FileText,
+  GripVertical,
   History,
   LayoutTemplate,
   LoaderCircle,
@@ -21,27 +22,42 @@ import { StudioPanel } from "@/components/studio/studio-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  buildScriptConsistency,
+  buildScriptSummary,
+  normalizeConsistency,
+  parseScriptYaml,
+  serializeScriptYaml,
+} from "@/lib/script-yaml"
 import { cn } from "@/lib/utils"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
 import { convertScript, getScriptDetail, getScriptHistory, logout } from "@/services"
 import { useAuthStore } from "@/stores"
 import type {
+  ScriptBeat,
+  ScriptChapter,
   ScriptChapterInput,
   ScriptConsistencyReport,
   ScriptConvertRequest,
   ScriptDetailResponse,
   ScriptHistoryItem,
+  ScriptScene,
   ScriptSummary,
   ScriptTaskMeta,
+  ScriptYamlDocument,
 } from "@/types"
 
 type Pacing = ScriptConvertRequest["pacing"]
 
-type OutlineNode = {
+type ScriptTreeNode = {
   id: string
   label: string
-  depth: number
-  children: OutlineNode[]
+  description: string
+  kind: "chapter" | "scene" | "beat"
+  chapterIndex: number
+  sceneIndex?: number
+  beatIndex?: number
+  children: ScriptTreeNode[]
 }
 
 type WorkshopResult = {
@@ -89,53 +105,46 @@ const STATUS_FILTER_OPTIONS: Array<{ value: ScriptTaskStatus; label: string }> =
   { value: "pending", label: "等待中" },
 ]
 
-function normalizeConsistency(report?: ScriptConsistencyReport) {
-  return {
-    rolesMissing: report?.roles_missing ?? report?.RolesMissing ?? [],
-    settingsMissing: report?.settings_missing ?? report?.SettingsMissing ?? [],
-    danglingRefs: report?.dangling_refs ?? report?.DanglingRefs ?? [],
+function buildSemanticTree(document: ScriptYamlDocument | null): ScriptTreeNode[] {
+  if (!document) {
+    return []
   }
+
+  return document.chapters.map((chapter, chapterIndex) => ({
+    id: `chapter-${chapter.id}`,
+    label: chapter.title || `第 ${chapterIndex + 1} 章`,
+    description: chapter.summary || "点击查看这一章的梗概与场景。",
+    kind: "chapter",
+    chapterIndex,
+    children: chapter.scenes.map((scene, sceneIndex) => ({
+      id: `scene-${scene.id}`,
+      label: scene.title || `场景 ${sceneIndex + 1}`,
+      description: `${scene.location || "未设置地点"} / ${scene.time || "未设置时间"}`,
+      kind: "scene",
+      chapterIndex,
+      sceneIndex,
+      children: scene.beats.map((beat, beatIndex) => ({
+        id: `beat-${beat.id}`,
+        label: beat.summary || `节拍 ${beatIndex + 1}`,
+        description:
+          beat.type === "dialogue" || beat.type === "inner"
+            ? `${beat.dialogue?.speaker || "未设置角色"}：${beat.dialogue?.content || "待补充对白"}`
+            : beat.type,
+        kind: "beat",
+        chapterIndex,
+        sceneIndex,
+        beatIndex,
+        children: [],
+      })),
+    })),
+  }))
 }
 
-function buildOutline(yaml: string): OutlineNode[] {
-  const lines = yaml
-    .split("\n")
-    .map((raw) => raw.replace(/\t/g, "  "))
-    .filter((line) => line.trim().length > 0)
-
-  const root: OutlineNode[] = []
-  const stack: OutlineNode[] = []
-
-  lines.forEach((line, index) => {
-    const depth = Math.floor((line.match(/^ */)?.[0].length ?? 0) / 2)
-    const node: OutlineNode = {
-      id: `${index}-${line.trim()}`,
-      label: line.trim(),
-      depth,
-      children: [],
-    }
-
-    while (stack.length > 0 && stack[stack.length - 1].depth >= depth) {
-      stack.pop()
-    }
-
-    if (stack.length === 0) {
-      root.push(node)
-    } else {
-      stack[stack.length - 1].children.push(node)
-    }
-
-    stack.push(node)
-  })
-
-  return root
-}
-
-function findOutlineNodeByID(nodes: OutlineNode[], id: string | null): OutlineNode | null {
+function findTreeNodeByID(nodes: ScriptTreeNode[], id: string | null): ScriptTreeNode | null {
   if (!id) return null
   for (const node of nodes) {
     if (node.id === id) return node
-    const childMatch = findOutlineNodeByID(node.children, id)
+    const childMatch = findTreeNodeByID(node.children, id)
     if (childMatch) return childMatch
   }
   return null
@@ -313,9 +322,9 @@ function TreeNode({
   onSelect,
   level = 0,
 }: {
-  node: OutlineNode
+  node: ScriptTreeNode
   selectedId: string | null
-  onSelect: (node: OutlineNode) => void
+  onSelect: (node: ScriptTreeNode) => void
   level?: number
 }) {
   const [open, setOpen] = useState(level < 2)
@@ -346,7 +355,12 @@ function TreeNode({
         ) : (
           <span className="mt-0.5 h-4 w-4 shrink-0" />
         )}
-        <span className="break-all">{node.label}</span>
+        <div className="min-w-0">
+          <span className="block break-all">{node.label}</span>
+          <span className="mt-0.5 block truncate text-xs text-slate-400">
+            {node.description}
+          </span>
+        </div>
       </button>
       {hasChildren && open ? (
         <div className="space-y-1">
@@ -424,11 +438,14 @@ export default function ScriptWorkshopPage() {
   const [history, setHistory] = useState<ScriptHistoryItem[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [activeResult, setActiveResult] = useState<WorkshopResult | null>(null)
+  const [editableDocument, setEditableDocument] = useState<ScriptYamlDocument | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [activeChapterIndex, setActiveChapterIndex] = useState(0)
   const [view, setView] = useState<ResultView>("overview")
   const [wrapYaml, setWrapYaml] = useState(true)
   const [generationStepIndex, setGenerationStepIndex] = useState(0)
+  const [draggedBeatId, setDraggedBeatId] = useState<string | null>(null)
+  const [dragOverBeatId, setDragOverBeatId] = useState<string | null>(null)
   const statusMenuRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -523,6 +540,176 @@ export default function ScriptWorkshopPage() {
     )
   }
 
+  function applyDocumentUpdate(updater: (current: ScriptYamlDocument) => ScriptYamlDocument) {
+    setEditableDocument((current) => (current ? updater(current) : current))
+  }
+
+  function setResultForEditing(result: WorkshopResult | null) {
+    setActiveResult(result)
+    setEditableDocument(result ? parseScriptYaml(result.yaml) : null)
+  }
+
+  function updateScriptChapter(
+    chapterIndex: number,
+    updater: (chapter: ScriptChapter) => ScriptChapter
+  ) {
+    applyDocumentUpdate((current) => ({
+      ...current,
+      chapters: current.chapters.map((chapter, index) =>
+        index === chapterIndex ? updater(chapter) : chapter
+      ),
+    }))
+  }
+
+  function updateScriptScene(
+    chapterIndex: number,
+    sceneIndex: number,
+    updater: (scene: ScriptScene) => ScriptScene
+  ) {
+    updateScriptChapter(chapterIndex, (chapter) => ({
+      ...chapter,
+      scenes: chapter.scenes.map((scene, index) =>
+        index === sceneIndex ? updater(scene) : scene
+      ),
+    }))
+  }
+
+  function updateScriptBeat(
+    chapterIndex: number,
+    sceneIndex: number,
+    beatIndex: number,
+    updater: (beat: ScriptBeat) => ScriptBeat
+  ) {
+    updateScriptScene(chapterIndex, sceneIndex, (scene) => ({
+      ...scene,
+      beats: scene.beats.map((beat, index) => (index === beatIndex ? updater(beat) : beat)),
+    }))
+  }
+
+  function moveBeatInScene(chapterIndex: number, sceneIndex: number, fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) {
+      return
+    }
+
+    updateScriptScene(chapterIndex, sceneIndex, (scene) => {
+      const nextBeats = [...scene.beats]
+      const [movedBeat] = nextBeats.splice(fromIndex, 1)
+      if (!movedBeat) {
+        return scene
+      }
+      nextBeats.splice(toIndex, 0, movedBeat)
+      return {
+        ...scene,
+        beats: nextBeats,
+      }
+    })
+    setFeedback("节拍顺序已更新，YAML 结构已同步。")
+  }
+
+  function updateScriptCharacter(
+    characterIndex: number,
+    updater: (character: ScriptYamlDocument["dramatis_personae"][number]) => ScriptYamlDocument["dramatis_personae"][number]
+  ) {
+    applyDocumentUpdate((current) => ({
+      ...current,
+      dramatis_personae: current.dramatis_personae.map((character, index) =>
+        index === characterIndex ? updater(character) : character
+      ),
+    }))
+  }
+
+  function updateScriptSetting(
+    settingIndex: number,
+    updater: (setting: ScriptYamlDocument["settings"][number]) => ScriptYamlDocument["settings"][number]
+  ) {
+    applyDocumentUpdate((current) => ({
+      ...current,
+      settings: current.settings.map((setting, index) =>
+        index === settingIndex ? updater(setting) : setting
+      ),
+    }))
+  }
+
+  function renameCharacterReferences(oldName: string, nextName: string) {
+    const previous = oldName.trim()
+    const currentName = nextName.trim()
+    if (!previous || !currentName || previous === currentName) {
+      return
+    }
+
+    applyDocumentUpdate((current) => ({
+      ...current,
+      chapters: current.chapters.map((chapter) => ({
+        ...chapter,
+        scenes: chapter.scenes.map((scene) => ({
+          ...scene,
+          pov: scene.pov === previous ? currentName : scene.pov,
+          beats: scene.beats.map((beat) =>
+            beat.dialogue?.speaker === previous
+              ? {
+                  ...beat,
+                  dialogue: {
+                    speaker: currentName,
+                    content: beat.dialogue.content,
+                  },
+                }
+              : beat
+          ),
+        })),
+      })),
+    }))
+  }
+
+  function renameSettingReferences(oldName: string, nextName: string) {
+    const previous = oldName.trim()
+    const currentName = nextName.trim()
+    if (!previous || !currentName || previous === currentName) {
+      return
+    }
+
+    applyDocumentUpdate((current) => ({
+      ...current,
+      chapters: current.chapters.map((chapter) => ({
+        ...chapter,
+        scenes: chapter.scenes.map((scene) => ({
+          ...scene,
+          location: scene.location === previous ? currentName : scene.location,
+        })),
+      })),
+    }))
+  }
+
+  function addCharacter() {
+    applyDocumentUpdate((current) => ({
+      ...current,
+      dramatis_personae: [
+        ...current.dramatis_personae,
+        {
+          name: `角色${current.dramatis_personae.length + 1}`,
+          archetype: "配角",
+          motivation: "",
+          traits: [],
+          relations: [],
+          first_appearance: "Chapter 1",
+        },
+      ],
+    }))
+  }
+
+  function addSetting() {
+    applyDocumentUpdate((current) => ({
+      ...current,
+      settings: [
+        ...current.settings,
+        {
+          name: `地点${current.settings.length + 1}`,
+          description: "",
+          importance: "medium",
+        },
+      ],
+    }))
+  }
+
   async function handleSubmit(
     event: Parameters<NonNullable<ComponentProps<"form">["onSubmit"]>>[0]
   ) {
@@ -561,7 +748,7 @@ export default function ScriptWorkshopPage() {
         { ...draft, chapters: trimmedChapters },
         response.data
       )
-      setActiveResult(result)
+      setResultForEditing(result)
       setSelectedTaskId(result.id)
       setSelectedNodeId(null)
       setSearchParams({ view: "detail" })
@@ -591,13 +778,13 @@ export default function ScriptWorkshopPage() {
       const detail = response.data
       const result = makeResultFromDetail(detail)
       if (result) {
-        setActiveResult(result)
+        setResultForEditing(result)
         setSelectedNodeId(null)
         setSearchParams({ view: "detail" })
         setView("overview")
         setFeedback(`已载入「${detail.metadata.title}」的结果，你可以继续审阅结构。`)
       } else {
-        setActiveResult(null)
+        setResultForEditing(null)
         setFeedback(
           detail.metadata.status === "failed"
             ? `该任务生成失败：${detail.metadata.err_msg || "请重试"}`
@@ -610,9 +797,9 @@ export default function ScriptWorkshopPage() {
   }
 
   async function handleCopyYaml() {
-    if (!activeResult?.yaml) return
+    if (!liveYaml) return
     try {
-      await navigator.clipboard.writeText(activeResult.yaml)
+      await navigator.clipboard.writeText(liveYaml)
       setFeedback("YAML 已复制到剪贴板。")
     } catch {
       setError("复制失败，请手动选中复制。")
@@ -620,22 +807,24 @@ export default function ScriptWorkshopPage() {
   }
 
   function handleDownloadYaml() {
-    if (!activeResult?.yaml) return
+    if (!liveYaml || !activeResult) return
     const name = `${activeResult.metadata.title || "script-workshop"}.yaml`
-    downloadTextFile(name, activeResult.yaml)
+    downloadTextFile(name, liveYaml)
     setFeedback("YAML 文件已开始下载。")
   }
 
-  const outline = useMemo(
-    () => buildOutline(activeResult?.yaml ?? ""),
-    [activeResult?.yaml]
+  const semanticTree = useMemo(() => buildSemanticTree(editableDocument), [editableDocument])
+  const liveYaml = useMemo(
+    () => (editableDocument ? serializeScriptYaml(editableDocument) : activeResult?.yaml ?? ""),
+    [editableDocument, activeResult?.yaml]
   )
-
-  const consistency = activeResult?.consistencyReport ?? {
-    rolesMissing: [],
-    settingsMissing: [],
-    danglingRefs: [],
-  }
+  const consistency = editableDocument
+    ? normalizeConsistency(buildScriptConsistency(editableDocument))
+    : activeResult?.consistencyReport ?? {
+        rolesMissing: [],
+        settingsMissing: [],
+        danglingRefs: [],
+      }
 
   const filteredHistory = useMemo(() => {
     return history.filter((item) => {
@@ -664,18 +853,45 @@ export default function ScriptWorkshopPage() {
       ? (searchParams.get("view") as SidebarView)
       : "workspace"
   const selectedNode = useMemo(
-    () => findOutlineNodeByID(outline, selectedNodeId) ?? outline[0] ?? null,
-    [outline, selectedNodeId]
+    () => findTreeNodeByID(semanticTree, selectedNodeId) ?? semanticTree[0] ?? null,
+    [semanticTree, selectedNodeId]
   )
+  const selectedChapterData = selectedNode
+    ? editableDocument?.chapters[selectedNode.chapterIndex] ?? null
+    : null
+  const selectedSceneData =
+    selectedNode?.sceneIndex !== undefined && selectedChapterData
+      ? selectedChapterData.scenes[selectedNode.sceneIndex] ?? null
+      : null
+  const selectedBeatData =
+    selectedNode?.beatIndex !== undefined && selectedSceneData
+      ? selectedSceneData.beats[selectedNode.beatIndex] ?? null
+      : null
+  const characterNames = editableDocument?.dramatis_personae.map((item) => item.name).filter(Boolean) ?? []
+  const settingNames = editableDocument?.settings.map((item) => item.name).filter(Boolean) ?? []
+  const currentPovOptions = selectedSceneData?.pov && !characterNames.includes(selectedSceneData.pov)
+    ? [selectedSceneData.pov, ...characterNames]
+    : characterNames
+  const currentLocationOptions =
+    selectedSceneData?.location && !settingNames.includes(selectedSceneData.location)
+      ? [selectedSceneData.location, ...settingNames]
+      : settingNames
+  const currentSpeakerOptions =
+    selectedBeatData?.dialogue?.speaker &&
+    !characterNames.includes(selectedBeatData.dialogue.speaker)
+      ? [selectedBeatData.dialogue.speaker, ...characterNames]
+      : characterNames
 
   const activeStatus = getStatusMeta(activeResult?.metadata.status ?? "pending")
-  const summary = activeResult?.summary ?? {
-    chapters: 0,
-    scenes: 0,
-    beats: 0,
-    characters: 0,
-    settings: 0,
-  }
+  const summary = editableDocument
+    ? buildScriptSummary(editableDocument)
+    : activeResult?.summary ?? {
+        chapters: 0,
+        scenes: 0,
+        beats: 0,
+        characters: 0,
+        settings: 0,
+      }
   return (
     <div className="min-h-screen bg-[#f6f6f7] text-slate-900">
       {isSubmitting ? (
@@ -1207,48 +1423,636 @@ export default function ScriptWorkshopPage() {
                                 wrapYaml ? "whitespace-pre-wrap wrap-break-word" : "whitespace-pre"
                               )}
                             >
-                              {activeResult.yaml}
+                              {liveYaml}
                             </pre>
                           </div>
                         </div>
                       ) : null}
 
                       {view === "structure" ? (
-                        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-                          <div className="max-h-[560px] overflow-y-auto rounded-[24px] border border-black/6 bg-slate-50 p-3">
-                            <div className="space-y-1">
-                              {outline.map((node) => (
-                                <TreeNode
-                                  key={node.id}
-                                  node={node}
-                                  selectedId={selectedNode?.id ?? null}
-                                  onSelect={(node) => setSelectedNodeId(node.id)}
-                                />
-                              ))}
+                        <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
+                          <div className="space-y-4">
+                            <div className="rounded-[24px] border border-black/6 bg-slate-50 p-4">
+                              <p className="text-xs text-slate-400">结构树</p>
+                              <p className="mt-2 text-sm leading-6 text-slate-500">
+                                按章节、场景、节拍逐层查看。点击任意节点，中间表单会自动切到对应内容。
+                              </p>
+                            </div>
+                            <div className="max-h-[560px] overflow-y-auto rounded-[24px] border border-black/6 bg-slate-50 p-3">
+                              <div className="space-y-1">
+                                {semanticTree.map((node) => (
+                                  <TreeNode
+                                    key={node.id}
+                                    node={node}
+                                    selectedId={selectedNode?.id ?? null}
+                                    onSelect={(node) => setSelectedNodeId(node.id)}
+                                  />
+                                ))}
+                              </div>
                             </div>
                           </div>
+
                           <div className="rounded-[24px] border border-black/6 bg-slate-50 p-5">
-                            <p className="text-xs text-slate-400">节点详情</p>
-                            {selectedNode ? (
-                              <div className="mt-4 space-y-3">
-                                <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
-                                  {selectedNode.label}
-                                </div>
-                                <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-600">
-                                  层级：{selectedNode.depth}
-                                </div>
-                                <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-600">
-                                  子节点：{selectedNode.children.length}
-                                </div>
+                            {!editableDocument ? (
+                              <div className="rounded-[20px] border border-dashed border-black/8 bg-white px-4 py-10 text-center text-sm text-slate-400">
+                                当前结果暂时无法解析成语义结构，请先重新生成一次剧本。
+                              </div>
+                            ) : !selectedNode ? (
+                              <div className="rounded-[20px] border border-dashed border-black/8 bg-white px-4 py-10 text-center text-sm text-slate-400">
+                                选择左侧节点开始编辑。
                               </div>
                             ) : (
-                              <p className="mt-4 text-sm text-slate-400">
-                                选择左侧节点查看结构信息。
-                              </p>
+                              <div className="space-y-5">
+                                <div className="flex flex-wrap items-start justify-between gap-4 rounded-[20px] bg-white px-4 py-4">
+                                  <div>
+                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                      {selectedNode.kind === "chapter"
+                                        ? "章节编辑"
+                                        : selectedNode.kind === "scene"
+                                          ? "场景编辑"
+                                          : "节拍编辑"}
+                                    </p>
+                                    <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                                      {selectedNode.label}
+                                    </h3>
+                                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                                      修改这里的可视化字段后，YAML 源码视图会实时同步更新。
+                                    </p>
+                                  </div>
+                                  <span className="rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-xs text-sky-600">
+                                    子节点 {selectedNode.children.length}
+                                  </span>
+                                </div>
+
+                                {selectedNode.kind === "chapter" && selectedChapterData ? (
+                                  <div className="space-y-4">
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">章节标题</Label>
+                                      <Input
+                                        value={selectedChapterData.title}
+                                        onChange={(event) =>
+                                          updateScriptChapter(selectedNode.chapterIndex, (chapter) => ({
+                                            ...chapter,
+                                            title: event.target.value,
+                                          }))
+                                        }
+                                        placeholder="请输入章节标题"
+                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                      />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">章节梗概</Label>
+                                      <textarea
+                                        value={selectedChapterData.summary}
+                                        onChange={(event) =>
+                                          updateScriptChapter(selectedNode.chapterIndex, (chapter) => ({
+                                            ...chapter,
+                                            summary: event.target.value,
+                                          }))
+                                        }
+                                        placeholder="概括这一章的主要推进"
+                                        className="min-h-[180px] w-full rounded-[24px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                      />
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {selectedNode.kind === "scene" && selectedSceneData ? (
+                                  <div className="space-y-4">
+                                    <div className="grid gap-4 md:grid-cols-2">
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">场景标题</Label>
+                                        <Input
+                                          value={selectedSceneData.title}
+                                          onChange={(event) =>
+                                            updateScriptScene(
+                                              selectedNode.chapterIndex,
+                                              selectedNode.sceneIndex ?? 0,
+                                              (scene) => ({ ...scene, title: event.target.value })
+                                            )
+                                          }
+                                          placeholder="请输入场景标题"
+                                          className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">地点</Label>
+                                        <select
+                                          value={selectedSceneData.location}
+                                          onChange={(event) =>
+                                            updateScriptScene(
+                                              selectedNode.chapterIndex,
+                                              selectedNode.sceneIndex ?? 0,
+                                              (scene) => ({ ...scene, location: event.target.value })
+                                            )
+                                          }
+                                          className="h-11 w-full rounded-2xl border border-black/8 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                        >
+                                          <option value="">请选择地点</option>
+                                          {currentLocationOptions.map((item) => (
+                                            <option key={item} value={item}>
+                                              {settingNames.includes(item) ? item : `${item}（未注册）`}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">时间</Label>
+                                        <Input
+                                          value={selectedSceneData.time}
+                                          onChange={(event) =>
+                                            updateScriptScene(
+                                              selectedNode.chapterIndex,
+                                              selectedNode.sceneIndex ?? 0,
+                                              (scene) => ({ ...scene, time: event.target.value })
+                                            )
+                                          }
+                                          placeholder="如 Day / Night"
+                                          className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">视角角色</Label>
+                                        <select
+                                          value={selectedSceneData.pov}
+                                          onChange={(event) =>
+                                            updateScriptScene(
+                                              selectedNode.chapterIndex,
+                                              selectedNode.sceneIndex ?? 0,
+                                              (scene) => ({ ...scene, pov: event.target.value })
+                                            )
+                                          }
+                                          className="h-11 w-full rounded-2xl border border-black/8 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                        >
+                                          <option value="">请选择角色</option>
+                                          {currentPovOptions.map((item) => (
+                                            <option key={item} value={item}>
+                                              {characterNames.includes(item) ? item : `${item}（未注册）`}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">场景目标</Label>
+                                      <textarea
+                                        value={selectedSceneData.goal}
+                                        onChange={(event) =>
+                                          updateScriptScene(
+                                            selectedNode.chapterIndex,
+                                            selectedNode.sceneIndex ?? 0,
+                                            (scene) => ({ ...scene, goal: event.target.value })
+                                          )
+                                        }
+                                        placeholder="写下这一场景的推进目标"
+                                        className="min-h-[120px] w-full rounded-[24px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                      />
+                                    </div>
+                                    <div className="grid gap-4 md:grid-cols-2">
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">氛围</Label>
+                                        <Input
+                                          value={selectedSceneData.mood}
+                                          onChange={(event) =>
+                                            updateScriptScene(
+                                              selectedNode.chapterIndex,
+                                              selectedNode.sceneIndex ?? 0,
+                                              (scene) => ({ ...scene, mood: event.target.value })
+                                            )
+                                          }
+                                          placeholder="如 紧张 / 温暖"
+                                          className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                        />
+                                      </div>
+                                      <div className="rounded-[20px] border border-black/6 bg-white px-4 py-4 text-sm text-slate-500">
+                                        该场景共有 {selectedSceneData.beats.length} 个节拍。你可以直接拖拽下方卡片调整顺序，或点击左侧节拍节点编辑内容。
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <Label className="text-slate-600">节拍排序</Label>
+                                        <span className="text-xs text-slate-400">
+                                          拖拽卡片可调整顺序
+                                        </span>
+                                      </div>
+                                      <div className="space-y-3">
+                                        {selectedSceneData.beats.map((beat, beatIndex) => {
+                                          const beatNodeId = `beat-${beat.id}`
+                                          const active = selectedNodeId === beatNodeId
+                                          const isDragOver = dragOverBeatId === beat.id
+
+                                          return (
+                                            <button
+                                              key={beat.id}
+                                              type="button"
+                                              draggable
+                                              onDragStart={() => setDraggedBeatId(beat.id)}
+                                              onDragOver={(event) => {
+                                                event.preventDefault()
+                                                if (dragOverBeatId !== beat.id) {
+                                                  setDragOverBeatId(beat.id)
+                                                }
+                                              }}
+                                              onDragEnd={() => {
+                                                setDraggedBeatId(null)
+                                                setDragOverBeatId(null)
+                                              }}
+                                              onDrop={(event) => {
+                                                event.preventDefault()
+                                                const fromIndex = selectedSceneData.beats.findIndex(
+                                                  (item) => item.id === draggedBeatId
+                                                )
+                                                if (fromIndex >= 0) {
+                                                  moveBeatInScene(
+                                                    selectedNode.chapterIndex,
+                                                    selectedNode.sceneIndex ?? 0,
+                                                    fromIndex,
+                                                    beatIndex
+                                                  )
+                                                }
+                                                setDraggedBeatId(null)
+                                                setDragOverBeatId(null)
+                                              }}
+                                              onClick={() => setSelectedNodeId(beatNodeId)}
+                                              className={cn(
+                                                "flex w-full items-start gap-3 rounded-[20px] border bg-white px-4 py-4 text-left transition-all",
+                                                active
+                                                  ? "border-sky-200 bg-sky-50/70"
+                                                  : "border-black/6 hover:bg-slate-50",
+                                                isDragOver && "border-sky-300 shadow-[0_0_0_3px_rgba(125,211,252,0.25)]",
+                                                draggedBeatId === beat.id && "opacity-60"
+                                              )}
+                                            >
+                                              <div className="mt-0.5 flex items-center gap-3 text-slate-300">
+                                                <GripVertical className="h-4 w-4" />
+                                                <span className="text-xs font-medium text-slate-400">
+                                                  {beatIndex + 1}
+                                                </span>
+                                              </div>
+                                              <div className="min-w-0 flex-1">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <span className="rounded-full border border-black/8 bg-slate-50 px-2.5 py-0.5 text-xs text-slate-500">
+                                                    {beat.type}
+                                                  </span>
+                                                  <span className="text-sm font-medium text-slate-900">
+                                                    {beat.summary || `节拍 ${beatIndex + 1}`}
+                                                  </span>
+                                                </div>
+                                                <p className="mt-2 text-sm leading-6 text-slate-500">
+                                                  {beat.dialogue?.speaker
+                                                    ? `${beat.dialogue.speaker}：${beat.dialogue.content || "待补充对白"}`
+                                                    : "动作 / 叙述类节拍，可点击进入编辑详情。"}
+                                                </p>
+                                              </div>
+                                            </button>
+                                          )
+                                        })}
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">场景收尾</Label>
+                                      <textarea
+                                        value={selectedSceneData.outcome}
+                                        onChange={(event) =>
+                                          updateScriptScene(
+                                            selectedNode.chapterIndex,
+                                            selectedNode.sceneIndex ?? 0,
+                                            (scene) => ({ ...scene, outcome: event.target.value })
+                                          )
+                                        }
+                                        placeholder="描述这一场的收尾结果或悬念"
+                                        className="min-h-[120px] w-full rounded-[24px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                      />
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {selectedNode.kind === "beat" && selectedBeatData ? (
+                                  <div className="space-y-4">
+                                    <div className="flex flex-wrap gap-2">
+                                      {(["action", "dialogue", "inner", "exposition"] as const).map(
+                                        (type) => (
+                                          <button
+                                            key={type}
+                                            type="button"
+                                            onClick={() =>
+                                              updateScriptBeat(
+                                                selectedNode.chapterIndex,
+                                                selectedNode.sceneIndex ?? 0,
+                                                selectedNode.beatIndex ?? 0,
+                                                (beat) => ({
+                                                  ...beat,
+                                                  type,
+                                                  dialogue:
+                                                    type === "dialogue" || type === "inner"
+                                                      ? beat.dialogue ?? { speaker: "", content: "" }
+                                                      : undefined,
+                                                })
+                                              )
+                                            }
+                                            className={cn(
+                                              "rounded-full border px-3 py-1.5 text-sm transition-colors",
+                                              selectedBeatData.type === type
+                                                ? "border-sky-200 bg-sky-50 text-sky-700"
+                                                : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
+                                            )}
+                                          >
+                                            {type}
+                                          </button>
+                                        )
+                                      )}
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">节拍摘要</Label>
+                                      <Input
+                                        value={selectedBeatData.summary}
+                                        onChange={(event) =>
+                                          updateScriptBeat(
+                                            selectedNode.chapterIndex,
+                                            selectedNode.sceneIndex ?? 0,
+                                            selectedNode.beatIndex ?? 0,
+                                            (beat) => ({ ...beat, summary: event.target.value })
+                                          )
+                                        }
+                                        placeholder="概括这一拍发生了什么"
+                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                      />
+                                    </div>
+                                    {selectedBeatData.type === "dialogue" ||
+                                    selectedBeatData.type === "inner" ? (
+                                      <div className="grid gap-4 md:grid-cols-2">
+                                        <div className="space-y-2">
+                                          <Label className="text-slate-600">角色名</Label>
+                                          <select
+                                            value={selectedBeatData.dialogue?.speaker ?? ""}
+                                            onChange={(event) =>
+                                              updateScriptBeat(
+                                                selectedNode.chapterIndex,
+                                                selectedNode.sceneIndex ?? 0,
+                                                selectedNode.beatIndex ?? 0,
+                                                (beat) => ({
+                                                  ...beat,
+                                                  dialogue: {
+                                                    speaker: event.target.value,
+                                                    content: beat.dialogue?.content ?? "",
+                                                  },
+                                                })
+                                              )
+                                            }
+                                            className="h-11 w-full rounded-2xl border border-black/8 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                          >
+                                            <option value="">请选择角色</option>
+                                            {currentSpeakerOptions.map((item) => (
+                                              <option key={item} value={item}>
+                                                {characterNames.includes(item) ? item : `${item}（未注册）`}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                        <div className="rounded-[20px] border border-black/6 bg-white px-4 py-4 text-sm text-slate-500">
+                                          这里修改角色名后，源码视图中的 `dialogue.speaker` 会实时同步。
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    {selectedBeatData.type === "dialogue" ||
+                                    selectedBeatData.type === "inner" ? (
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">对白内容</Label>
+                                        <textarea
+                                          value={selectedBeatData.dialogue?.content ?? ""}
+                                          onChange={(event) =>
+                                            updateScriptBeat(
+                                              selectedNode.chapterIndex,
+                                              selectedNode.sceneIndex ?? 0,
+                                              selectedNode.beatIndex ?? 0,
+                                              (beat) => ({
+                                                ...beat,
+                                                dialogue: {
+                                                  speaker: beat.dialogue?.speaker ?? "",
+                                                  content: event.target.value,
+                                                },
+                                              })
+                                            )
+                                          }
+                                          placeholder="请输入对白或内心独白"
+                                          className="min-h-[160px] w-full rounded-[24px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                        />
+                                      </div>
+                                    ) : (
+                                      <div className="rounded-[20px] border border-dashed border-black/8 bg-white px-4 py-6 text-sm text-slate-400">
+                                        当前节拍类型无需对白字段，你可以继续编辑节拍摘要，或切换成 dialogue / inner 类型。
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : null}
+                              </div>
                             )}
                           </div>
                         </div>
                       ) : null}
+                    </StudioPanel>
+
+                    <StudioPanel
+                      eyebrow="Registry"
+                      title="人物表与地点表"
+                      description="在这里维护全剧角色和地点注册表；改名时会自动同步场景视角、对白说话人和场景地点引用。"
+                      className="rounded-[30px] border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]"
+                    >
+                      {!editableDocument ? (
+                        <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-12 text-center text-sm text-slate-400">
+                          当前结果暂时无法编辑人物表和地点表。
+                        </div>
+                      ) : (
+                        <div className="grid gap-5 xl:grid-cols-2">
+                          <div className="space-y-4 rounded-[24px] border border-black/6 bg-slate-50 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-medium text-slate-900">人物表</p>
+                                <p className="mt-1 text-xs text-slate-400">
+                                  角色名修改后会自动同步场景视角和对白说话人。
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={addCharacter}
+                                className="border-black/8 bg-white text-slate-700 hover:bg-slate-50"
+                              >
+                                新增角色
+                              </Button>
+                            </div>
+
+                            <div className="space-y-3">
+                              {editableDocument.dramatis_personae.map((character, index) => (
+                                <div
+                                  key={`${character.name}-${index}`}
+                                  className="space-y-3 rounded-[20px] border border-black/6 bg-white p-4"
+                                >
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">角色名</Label>
+                                      <Input
+                                        value={character.name}
+                                        onChange={(event) => {
+                                          const nextName = event.target.value
+                                          updateScriptCharacter(index, (item) => ({
+                                            ...item,
+                                            name: nextName,
+                                          }))
+                                          renameCharacterReferences(character.name, nextName)
+                                        }}
+                                        placeholder="请输入角色名"
+                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                      />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">角色类型</Label>
+                                      <Input
+                                        value={character.archetype}
+                                        onChange={(event) =>
+                                          updateScriptCharacter(index, (item) => ({
+                                            ...item,
+                                            archetype: event.target.value,
+                                          }))
+                                        }
+                                        placeholder="主角 / 配角 / 反派"
+                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label className="text-slate-600">动机</Label>
+                                    <textarea
+                                      value={character.motivation}
+                                      onChange={(event) =>
+                                        updateScriptCharacter(index, (item) => ({
+                                          ...item,
+                                          motivation: event.target.value,
+                                        }))
+                                      }
+                                      placeholder="写下角色核心行动动机"
+                                      className="min-h-[100px] w-full rounded-[20px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                    />
+                                  </div>
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">性格标签</Label>
+                                      <Input
+                                        value={character.traits.join("，")}
+                                        onChange={(event) =>
+                                          updateScriptCharacter(index, (item) => ({
+                                            ...item,
+                                            traits: event.target.value
+                                              .split(/[,，]/)
+                                              .map((value) => value.trim())
+                                              .filter(Boolean),
+                                          }))
+                                        }
+                                        placeholder="冷静，执着"
+                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                      />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">首次出现</Label>
+                                      <Input
+                                        value={character.first_appearance}
+                                        onChange={(event) =>
+                                          updateScriptCharacter(index, (item) => ({
+                                            ...item,
+                                            first_appearance: event.target.value,
+                                          }))
+                                        }
+                                        placeholder="Chapter 1"
+                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-4 rounded-[24px] border border-black/6 bg-slate-50 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-medium text-slate-900">地点表</p>
+                                <p className="mt-1 text-xs text-slate-400">
+                                  地点名修改后会自动同步所有场景的 `location` 引用。
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={addSetting}
+                                className="border-black/8 bg-white text-slate-700 hover:bg-slate-50"
+                              >
+                                新增地点
+                              </Button>
+                            </div>
+
+                            <div className="space-y-3">
+                              {editableDocument.settings.map((setting, index) => (
+                                <div
+                                  key={`${setting.name}-${index}`}
+                                  className="space-y-3 rounded-[20px] border border-black/6 bg-white p-4"
+                                >
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">地点名</Label>
+                                      <Input
+                                        value={setting.name}
+                                        onChange={(event) => {
+                                          const nextName = event.target.value
+                                          updateScriptSetting(index, (item) => ({
+                                            ...item,
+                                            name: nextName,
+                                          }))
+                                          renameSettingReferences(setting.name, nextName)
+                                        }}
+                                        placeholder="请输入地点名"
+                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                      />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">重要程度</Label>
+                                      <select
+                                        value={setting.importance}
+                                        onChange={(event) =>
+                                          updateScriptSetting(index, (item) => ({
+                                            ...item,
+                                            importance: event.target.value,
+                                          }))
+                                        }
+                                        className="h-11 w-full rounded-2xl border border-black/8 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                      >
+                                        <option value="high">high</option>
+                                        <option value="medium">medium</option>
+                                        <option value="low">low</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label className="text-slate-600">地点描述</Label>
+                                    <textarea
+                                      value={setting.description}
+                                      onChange={(event) =>
+                                        updateScriptSetting(index, (item) => ({
+                                          ...item,
+                                          description: event.target.value,
+                                        }))
+                                      }
+                                      placeholder="描述环境、氛围和重要细节"
+                                      className="min-h-[120px] w-full rounded-[20px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </StudioPanel>
 
                     <StudioPanel
