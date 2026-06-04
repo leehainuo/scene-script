@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Check,
+  CircleCheckBig,
   Copy,
   Download,
   FileText,
@@ -892,7 +893,14 @@ export default function ScriptWorkshopPage() {
 
       setResultForEditing(nextResult)
       setSelectedTaskId(nextResult.id)
-      toast.success("修改已保存")
+      toast.success("修改已保存", {
+        icon: <CircleCheckBig className="h-5 w-5 text-green-600" />,
+        style: {
+          background: "#ffffff",
+          border: "1px solid rgba(34, 197, 94, 0.18)",
+          color: "#0f172a",
+        },
+      })
       await loadHistory()
     } catch (err) {
       toast.error(extractErrorMessage(err, "保存失败，请稍后重试。"))
