@@ -3,8 +3,8 @@ import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom"
 import { AuthGuard } from "./AuthGuard"
 
 // Lazy load pages
-import Login from "@/pages/login"
 import Dashboard from "@/pages/dashboard"
+import ScriptWorkshop from "@/pages/script-workshop"
 import NotFound from "@/pages/404"
 
 // Loading component
@@ -20,18 +20,22 @@ function PageLoading() {
 const router = createBrowserRouter([
   {
     path: "/login",
-    element: (
-      <Suspense fallback={<PageLoading />}>
-        <Login />
-      </Suspense>
-    ),
+    element: <Navigate to="/?login=1" replace />,
   },
   {
     path: "/",
     element: (
+      <Suspense fallback={<PageLoading />}>
+        <Dashboard />
+      </Suspense>
+    ),
+  },
+  {
+    path: "/script-workshop",
+    element: (
       <AuthGuard>
         <Suspense fallback={<PageLoading />}>
-          <Dashboard />
+          <ScriptWorkshop />
         </Suspense>
       </AuthGuard>
     ),

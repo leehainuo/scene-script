@@ -11,8 +11,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const location = useLocation()
 
   if (!isAuthenticated) {
-    // Redirect to login, save the attempted URL
-    return <Navigate to="/login" state={{ from: location }} replace />
+    const redirectTo = `${location.pathname}${location.search}${location.hash}`
+    const params = new URLSearchParams({
+      login: "1",
+      redirect: redirectTo,
+    })
+
+    return <Navigate to={`/?${params.toString()}`} replace />
   }
 
   return <>{children}</>
