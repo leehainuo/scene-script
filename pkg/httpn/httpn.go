@@ -67,6 +67,19 @@ func BindJSON(c *gin.Context, obj any) error {
 	return validate.Struct(obj)
 }
 
+// BindQuery - Bind and validate query parameters.
+func BindQuery(c *gin.Context, obj any) error {
+	if err := c.ShouldBindQuery(obj); err != nil {
+		return err
+	}
+	return validate.Struct(obj)
+}
+
+// Validate - Validate a struct without binding.
+func Validate(obj any) error {
+	return validate.Struct(obj)
+}
+
 // PathInt64 - Get path parameter as int64
 func PathInt64(c *gin.Context, name string) (int64, error) {
 	return strconv.ParseInt(c.Param(name), 10, 64)

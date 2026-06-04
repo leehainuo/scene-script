@@ -13,6 +13,7 @@ import (
 	"scene-script/internal/model"
 	"scene-script/internal/service"
 	"scene-script/internal/svc"
+	"scene-script/internal/types"
 	"scene-script/pkg/errorn"
 	"scene-script/pkg/logn"
 	"scene-script/pkg/stores/sqlx"
@@ -36,7 +37,7 @@ func NewConvertScriptLogic(c context.Context, svc *svc.ServiceContext) *ConvertS
 }
 
 // Convert - Validate, call LLM, parse YAML, persist task & result
-func (l *ConvertScriptLogic) Convert(userID int64, req *model.ConvertRequest) (*model.ConvertResponse, error) {
+func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) (*types.ConvertScriptResp, error) {
 	if len(req.Chapters) < 3 {
 		return nil, errorn.New(http.StatusBadRequest, "minimum 3 chapters required")
 	}
@@ -96,7 +97,7 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *model.ConvertRequest) (*
 		return nil, errorn.New(http.StatusInternalServerError, "failed to store conversion result")
 	}
 
-	return &model.ConvertResponse{
+	return &types.ConvertScriptResp{
 		ID:                taskID,
 		YAML:              result.YAML,
 		Summary:           result.Summary,
@@ -104,7 +105,7 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *model.ConvertRequest) (*
 	}, nil
 }
 
-func (l *ConvertScriptLogic) persistSuccess(scriptTask *model.ScriptTask, req *model.ConvertRequest, result *service.ConvertResult) error {
+func (l *ConvertScriptLogic) persistSuccess(scriptTask *model.ScriptTask, req *types.ConvertScriptReq, result *service.ConvertResult) error {
 	return l.svc.DB.TransactCtx(l.c, func(ctx context.Context, conn sqlx.SqlConn) error {
 		taskModel := model.NewScriptTaskModel(conn)
 		chapterModel := model.NewScriptChapterModel(conn)

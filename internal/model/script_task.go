@@ -33,6 +33,7 @@ type ScriptTaskModel interface {
 	// BEGIN: customizable methods (preserved during code regeneration)
 	FindByTaskID(ctx context.Context, taskID string) (*ScriptTask, error)
 	ListByUser(ctx context.Context, userID int64, limit, offset int64) ([]*ScriptTask, error)
+	CountByUser(ctx context.Context, userID int64) (int64, error)
 	// END: customizable methods
 }
 
@@ -136,6 +137,21 @@ func (m *defaultScriptTaskModel) ListByUser(ctx context.Context, userID int64, l
 		return []*ScriptTask{}, nil
 	default:
 		return nil, err
+	}
+}
+
+func (m *defaultScriptTaskModel) CountByUser(ctx context.Context, userID int64) (int64, error) {
+	query := `SELECT COUNT(1) FROM ` + m.table + ` WHERE user_id = ?`
+
+	var total int64
+	err := m.conn.QueryRowCtx(ctx, &total, query, userID)
+	switch err {
+	case nil:
+		return total, nil
+	case sql.ErrNoRows:
+		return 0, nil
+	default:
+		return 0, err
 	}
 }
 
