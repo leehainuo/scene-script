@@ -113,6 +113,18 @@ func (sc *ScriptConverter) Convert(ctx context.Context, req ConvertRequest) (*Co
 	return nil, lastErr
 }
 
+// NormalizeEditedYAML validates and normalizes user-edited YAML against the
+// persisted task metadata so edited results can be safely stored.
+func (sc *ScriptConverter) NormalizeEditedYAML(rawYAML string, genre, tone, pacing string, sourceChapters int) (*ConvertResult, error) {
+	req := ConvertRequest{
+		Chapters: make([]ChapterInput, sourceChapters),
+		Genre:    genre,
+		Tone:     tone,
+		Pacing:   pacing,
+	}
+	return sc.normalizeAndValidate(req, rawYAML)
+}
+
 func (sc *ScriptConverter) validateRequest(req ConvertRequest) error {
 	if len(req.Chapters) < 3 {
 		return NewConvertError(ConvertErrorSchema, fmt.Sprintf("minimum 3 chapters required, got %d", len(req.Chapters)), nil)
