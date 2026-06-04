@@ -31,7 +31,8 @@ type ScriptTask struct {
 type ScriptTaskModel interface {
 	scriptTaskModel
 	// BEGIN: customizable methods (preserved during code regeneration)
-	// Add your custom methods here
+	FindByTaskID(ctx context.Context, taskID string) (*ScriptTask, error)
+	ListByUser(ctx context.Context, userID int64, limit, offset int64) ([]*ScriptTask, error)
 	// END: customizable methods
 }
 
@@ -105,3 +106,37 @@ func (m *defaultScriptTaskModel) Trans(ctx context.Context, fn func(context.Cont
 		return fn(ctx, transModel)
 	})
 }
+
+// BEGIN: customizable methods (preserved during code regeneration)
+
+func (m *defaultScriptTaskModel) FindByTaskID(ctx context.Context, taskID string) (*ScriptTask, error) {
+	query := `SELECT ` + scriptTaskFieldNames + ` FROM ` + m.table + ` WHERE task_id = ? LIMIT 1`
+
+	var data ScriptTask
+	err := m.conn.QueryRowCtx(ctx, &data, query, taskID)
+	switch err {
+	case nil:
+		return &data, nil
+	case sql.ErrNoRows:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
+func (m *defaultScriptTaskModel) ListByUser(ctx context.Context, userID int64, limit, offset int64) ([]*ScriptTask, error) {
+	query := `SELECT ` + scriptTaskFieldNames + ` FROM ` + m.table + ` WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?`
+
+	var data []*ScriptTask
+	err := m.conn.QueryRowsCtx(ctx, &data, query, userID, limit, offset)
+	switch err {
+	case nil:
+		return data, nil
+	case sql.ErrNoRows:
+		return []*ScriptTask{}, nil
+	default:
+		return nil, err
+	}
+}
+
+// END: customizable methods

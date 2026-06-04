@@ -27,7 +27,7 @@ type ScriptResult struct {
 type ScriptResultModel interface {
 	scriptResultModel
 	// BEGIN: customizable methods (preserved during code regeneration)
-	// Add your custom methods here
+	FindByTaskID(ctx context.Context, taskID string) (*ScriptResult, error)
 	// END: customizable methods
 }
 
@@ -101,3 +101,22 @@ func (m *defaultScriptResultModel) Trans(ctx context.Context, fn func(context.Co
 		return fn(ctx, transModel)
 	})
 }
+
+// BEGIN: customizable methods (preserved during code regeneration)
+
+func (m *defaultScriptResultModel) FindByTaskID(ctx context.Context, taskID string) (*ScriptResult, error) {
+	query := `SELECT ` + scriptResultFieldNames + ` FROM ` + m.table + ` WHERE task_id = ? LIMIT 1`
+
+	var data ScriptResult
+	err := m.conn.QueryRowCtx(ctx, &data, query, taskID)
+	switch err {
+	case nil:
+		return &data, nil
+	case sql.ErrNoRows:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
+// END: customizable methods
