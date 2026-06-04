@@ -54,7 +54,7 @@ func runAll(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// 2. 生成代码
-	gen := codegen.NewCodeGenerator(tables)
+	gen := codegen.NewCodeGenerator(tables, tablePrefix)
 
 	// 2.1 生成 Types
 	fmt.Println("📝 Generating Types...")
@@ -128,7 +128,7 @@ func runAll(cmd *cobra.Command, args []string) error {
 	fmt.Println("📝 Updating ServiceContext...")
 	svcPath := filepath.Join(outputDir, "internal/svc/svc.go")
 	if _, err := os.Stat(svcPath); err == nil {
-		if err := codegen.UpdateServiceContext(svcPath, tables); err != nil {
+		if err := codegen.UpdateServiceContext(svcPath, tables, tablePrefix); err != nil {
 			fmt.Printf("⚠️  Failed to update svc: %v\n", err)
 		} else {
 			fmt.Println("✅ Updated ServiceContext")
@@ -144,7 +144,7 @@ func runAll(cmd *cobra.Command, args []string) error {
 	if err := codegen.EnsureRouterFile(routerPath, apiVersion); err != nil {
 		fmt.Printf("⚠️  Failed to ensure router file: %v\n", err)
 	} else {
-		if err := codegen.UpdateRouter(routerPath, tables, apiVersion); err != nil {
+		if err := codegen.UpdateRouter(routerPath, tables, apiVersion, tablePrefix); err != nil {
 			fmt.Printf("⚠️  Failed to update router: %v\n", err)
 		} else {
 			fmt.Println("✅ Updated Router")

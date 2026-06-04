@@ -12,12 +12,14 @@ import (
 // CodeGenerator 代码生成器
 type CodeGenerator struct {
 	tables []parser.TableDef
+	prefix string
 }
 
 // NewCodeGenerator 创建代码生成器
-func NewCodeGenerator(tables []parser.TableDef) *CodeGenerator {
+func NewCodeGenerator(tables []parser.TableDef, prefix string) *CodeGenerator {
 	return &CodeGenerator{
 		tables: tables,
+		prefix: prefix,
 	}
 }
 
@@ -26,7 +28,7 @@ func (g *CodeGenerator) GenerateTypes() map[string]string {
 	files := make(map[string]string)
 
 	for _, table := range g.tables {
-		moduleName := toModuleName(table.Name)
+		moduleName := toModuleName(table.Name, g.prefix)
 		content := g.generateTypesForTable(table, moduleName)
 		files[moduleName+".go"] = content
 	}
@@ -133,7 +135,7 @@ func (g *CodeGenerator) GenerateHandlers() map[string]string {
 	files := make(map[string]string)
 
 	for _, table := range g.tables {
-		moduleName := toModuleName(table.Name)
+		moduleName := toModuleName(table.Name, g.prefix)
 
 		// 生成 CRUD handlers
 		files[fmt.Sprintf("create_%s_handler.go", moduleName)] = g.generateCreateHandler(table, moduleName)
@@ -351,7 +353,7 @@ func (g *CodeGenerator) GenerateLogics() map[string]string {
 	files := make(map[string]string)
 
 	for _, table := range g.tables {
-		moduleName := toModuleName(table.Name)
+		moduleName := toModuleName(table.Name, g.prefix)
 
 		// 生成 CRUD logics
 		files[fmt.Sprintf("create_%s_logic.go", moduleName)] = g.generateCreateLogic(table, moduleName)
@@ -563,7 +565,7 @@ func (g *CodeGenerator) GenerateModels() map[string]string {
 	files := make(map[string]string)
 
 	for _, table := range g.tables {
-		moduleName := toModuleName(table.Name)
+		moduleName := toModuleName(table.Name, g.prefix)
 		content := g.generateModelForTable(table, moduleName)
 		files[moduleName+".go"] = content
 	}
@@ -753,19 +755,24 @@ func (m *default{{.EntityName}}Model) Trans(ctx context.Context, fn func(context
 }
 
 // toModuleName 转换为模块名（单数形式，去除前缀）
-func toModuleName(tableName string) string {
+func toModuleName(tableName string, customPrefix string) string {
 	if tableName == "" {
 		return ""
 	}
 
 	name := tableName
 
-	// 去除常见表前缀
-	prefixes := []string{"sys_", "t_", "tb_", "tbl_"}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(name, prefix) {
-			name = strings.TrimPrefix(name, prefix)
-			break
+	// 如果指定了自定义前缀，优先使用
+	if customPrefix != "" && strings.HasPrefix(name, customPrefix) {
+		name = strings.TrimPrefix(name, customPrefix)
+	} else {
+		// 去除常见表前缀
+		prefixes := []string{"sys_", "t_", "tb_", "tbl_"}
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(name, prefix) {
+				name = strings.TrimPrefix(name, prefix)
+				break
+			}
 		}
 	}
 
