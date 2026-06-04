@@ -1,5 +1,5 @@
-next:
-  name: next_prod
+scene_script:
+  name: scene_script_prod
   env: prod
 
 server:
@@ -13,7 +13,7 @@ mysql:
   port: 3306
   user: root
   password: your-secure-password-here
-  database: next_db
+  database: scene_script_db
   max_open_conns: 100
   max_idle_conns: 10
   conn_max_lifetime: 3600

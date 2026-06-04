@@ -13,7 +13,7 @@ import (
 
 // Config - Configuration
 type Config struct {
-	App    AppConf         `mapstructure:"next"`
+	App    AppConf         `mapstructure:"scene_script"`
 	Server ServerConf      `mapstructure:"server"`
 	MySQL  sqlx.MySQLConf  `mapstructure:"mysql"`
 	Redis  redis.RedisConf `mapstructure:"redis"`
