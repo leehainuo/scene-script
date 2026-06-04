@@ -3,6 +3,8 @@ package model
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 
 	"scene-script/pkg/stores/sqlx"
@@ -26,7 +28,7 @@ type ScriptChapter struct {
 type ScriptChapterModel interface {
 	scriptChapterModel
 	// BEGIN: customizable methods (preserved during code regeneration)
-	// Add your custom methods here
+	InsertBatch(ctx context.Context, rows []*ScriptChapter) error
 	// END: customizable methods
 }
 
@@ -100,3 +102,30 @@ func (m *defaultScriptChapterModel) Trans(ctx context.Context, fn func(context.C
 		return fn(ctx, transModel)
 	})
 }
+
+// BEGIN: customizable methods (preserved during code regeneration)
+
+func (m *defaultScriptChapterModel) InsertBatch(ctx context.Context, rows []*ScriptChapter) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, 0, len(rows))
+	args := make([]any, 0, len(rows)*6)
+	now := time.Now()
+	for _, row := range rows {
+		placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?)")
+		args = append(args, row.TaskID, row.ChapterIndex, row.ChapterTitle, row.ChapterText, now, now)
+	}
+
+	query := fmt.Sprintf(
+		"INSERT INTO %s (task_id, chapter_index, chapter_title, chapter_text, created_at, updated_at) VALUES %s",
+		m.table,
+		strings.Join(placeholders, ", "),
+	)
+
+	_, err := m.conn.ExecCtx(ctx, query, args...)
+	return err
+}
+
+// END: customizable methods
