@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ComponentProps } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import {
@@ -581,6 +581,21 @@ export default function ScriptWorkshopPage() {
   }, [])
 
   useEffect(() => {
+    const taskIdFromQuery = searchParams.get("id")
+    const viewFromQuery = searchParams.get("view")
+
+    if (viewFromQuery !== "detail" || !taskIdFromQuery) {
+      return
+    }
+
+    if (selectedTaskId === taskIdFromQuery && activeResult?.id === taskIdFromQuery) {
+      return
+    }
+
+    void loadDetailById(taskIdFromQuery)
+  }, [searchParams, selectedTaskId, activeResult?.id])
+
+  useEffect(() => {
     if (!isSubmitting) return
 
     const timer = window.setInterval(() => {
@@ -618,6 +633,41 @@ export default function ScriptWorkshopPage() {
       setIsHistoryLoading(false)
     }
   }
+
+  const loadDetailById = useCallback(async (taskId: string, successMessage?: string) => {
+    setSelectedTaskId(taskId)
+    setError("")
+    setFeedback("")
+
+    try {
+      const response = await getScriptDetail(taskId)
+      if (response.code !== 0 || !response.data) {
+        setError(response.msg || "历史详情加载失败。")
+        return
+      }
+
+      const detail = response.data
+      const result = makeResultFromDetail(detail)
+      if (result) {
+        setResultForEditing(result)
+        setSelectedNodeId(null)
+        setSearchParams({ view: "detail", id: taskId })
+        setView("overview")
+        if (successMessage) {
+          setFeedback(successMessage)
+        }
+      } else {
+        setResultForEditing(null)
+        setFeedback(
+          detail.metadata.status === "failed"
+            ? `该任务生成失败：${detail.metadata.err_msg || "请重试"}`
+            : "该任务仍在处理中，请稍后刷新。"
+        )
+      }
+    } catch (err) {
+      setError(extractErrorMessage(err, "历史详情加载失败。"))
+    }
+  }, [setSearchParams])
 
   async function handleLogout() {
     try {
@@ -913,7 +963,7 @@ export default function ScriptWorkshopPage() {
       setResultForEditing(result)
       setSelectedTaskId(result.id)
       setSelectedNodeId(null)
-      setSearchParams({ view: "detail" })
+      setSearchParams({ view: "detail", id: result.id })
       setView("overview")
       setFeedback("第一版剧本舞台已经搭好，你可以继续看结构、复制 YAML 或回载历史。")
       await loadHistory()
@@ -926,36 +976,7 @@ export default function ScriptWorkshopPage() {
   }
 
   async function handleLoadHistory(item: ScriptHistoryItem) {
-    setSelectedTaskId(item.id)
-    setError("")
-    setFeedback("")
-
-    try {
-      const response = await getScriptDetail(item.id)
-      if (response.code !== 0 || !response.data) {
-        setError(response.msg || "历史详情加载失败。")
-        return
-      }
-
-      const detail = response.data
-      const result = makeResultFromDetail(detail)
-      if (result) {
-        setResultForEditing(result)
-        setSelectedNodeId(null)
-        setSearchParams({ view: "detail" })
-        setView("overview")
-        setFeedback(`已载入「${detail.metadata.title}」的结果，你可以继续审阅结构。`)
-      } else {
-        setResultForEditing(null)
-        setFeedback(
-          detail.metadata.status === "failed"
-            ? `该任务生成失败：${detail.metadata.err_msg || "请重试"}`
-            : "该任务仍在处理中，请稍后刷新。"
-        )
-      }
-    } catch (err) {
-      setError(extractErrorMessage(err, "历史详情加载失败。"))
-    }
+    await loadDetailById(item.id, `已载入「${item.title}」的结果，你可以继续审阅结构。`)
   }
 
   async function handleCopyYaml() {
@@ -999,6 +1020,7 @@ export default function ScriptWorkshopPage() {
 
       setResultForEditing(nextResult)
       setSelectedTaskId(nextResult.id)
+      setSearchParams({ view: "detail", id: nextResult.id })
       toast.success("修改已保存", {
         icon: <CircleCheckBig className="h-5 w-5 text-green-600" />,
         style: {
@@ -1131,7 +1153,15 @@ export default function ScriptWorkshopPage() {
             items={[
               { key: "workspace", label: "工作台", icon: Wand2, onClick: () => setSearchParams({ view: "workspace" }) },
               { key: "history", label: "列表", icon: History, onClick: () => setSearchParams({ view: "history" }) },
-              { key: "detail", label: "详情", icon: FileText, onClick: () => setSearchParams({ view: "detail" }) },
+              {
+                key: "detail",
+                label: "详情",
+                icon: FileText,
+                onClick: () =>
+                  setSearchParams(
+                    selectedTaskId ? { view: "detail", id: selectedTaskId } : { view: "detail" }
+                  ),
+              },
             ]}
           />
 
