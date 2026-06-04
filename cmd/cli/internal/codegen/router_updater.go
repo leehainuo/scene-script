@@ -18,7 +18,7 @@ import (
 )
 
 // UpdateRouter 更新 router/api/{version}/{version}.go 文件，追加新的路由
-func UpdateRouter(routerPath string, tables []parser.TableDef, apiVersion string) error {
+func UpdateRouter(routerPath string, tables []parser.TableDef, apiVersion string, customPrefix string) error {
 	// 读取现有文件
 	fset := token.NewFileSet()
 	node, err := goparser.ParseFile(fset, routerPath, nil, goparser.ParseComments)
@@ -31,7 +31,7 @@ func UpdateRouter(routerPath string, tables []parser.TableDef, apiVersion string
 
 	// 遍历表，添加路由
 	for _, table := range tables {
-		moduleName := toModuleName(table.Name)
+		moduleName := toModuleName(table.Name, customPrefix)
 		entityName := parser.ToCamelCase(moduleName)
 
 		// 检查是否已存在

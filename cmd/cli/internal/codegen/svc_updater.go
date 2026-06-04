@@ -15,7 +15,7 @@ import (
 )
 
 // UpdateServiceContext 更新 svc.go 文件，追加新的 Model
-func UpdateServiceContext(svcPath string, tables []parser.TableDef) error {
+func UpdateServiceContext(svcPath string, tables []parser.TableDef, customPrefix string) error {
 	// 读取现有文件
 	fset := token.NewFileSet()
 	node, err := goparser.ParseFile(fset, svcPath, nil, goparser.ParseComments)
@@ -25,7 +25,7 @@ func UpdateServiceContext(svcPath string, tables []parser.TableDef) error {
 
 	// 遍历表，添加 Model
 	for _, table := range tables {
-		moduleName := toModuleName(table.Name)
+		moduleName := toModuleName(table.Name, customPrefix)
 		entityName := parser.ToCamelCase(moduleName)
 		modelName := entityName + "Model"
 
