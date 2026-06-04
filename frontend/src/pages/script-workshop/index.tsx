@@ -31,7 +31,14 @@ import {
 } from "@/lib/script-yaml"
 import { cn } from "@/lib/utils"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
-import { convertScript, getScriptDetail, getScriptHistory, logout } from "@/services"
+import { toast } from "sonner"
+import {
+  convertScript,
+  getScriptDetail,
+  getScriptHistory,
+  logout,
+  saveScriptResult,
+} from "@/services"
 import { useAuthStore } from "@/stores"
 import type {
   ScriptBeat,
@@ -160,6 +167,13 @@ function formatDateTime(value?: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date)
+}
+
+function replaceLiteralText(source: string, from: string, to: string) {
+  if (!from || from === to || !source.includes(from)) {
+    return source
+  }
+  return source.split(from).join(to)
 }
 
 function createDefaultDraft(): ScriptConvertRequest {
@@ -429,6 +443,7 @@ export default function ScriptWorkshopPage() {
     return createDefaultDraft()
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const [isHistoryLoading, setIsHistoryLoading] = useState(false)
   const [statusFilters, setStatusFilters] = useState<ScriptTaskStatus[]>([])
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false)
@@ -447,6 +462,8 @@ export default function ScriptWorkshopPage() {
   const [draggedBeatId, setDraggedBeatId] = useState<string | null>(null)
   const [dragOverBeatId, setDragOverBeatId] = useState<string | null>(null)
   const statusMenuRef = useRef<HTMLDivElement | null>(null)
+  const characterRenameOriginRef = useRef<Record<number, string>>({})
+  const settingRenameOriginRef = useRef<Record<number, string>>({})
 
   useEffect(() => {
     localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft))
@@ -641,19 +658,40 @@ export default function ScriptWorkshopPage() {
       ...current,
       chapters: current.chapters.map((chapter) => ({
         ...chapter,
+        summary: replaceLiteralText(chapter.summary, previous, currentName),
         scenes: chapter.scenes.map((scene) => ({
           ...scene,
           pov: scene.pov === previous ? currentName : scene.pov,
+          goal: replaceLiteralText(scene.goal, previous, currentName),
+          outcome: replaceLiteralText(scene.outcome, previous, currentName),
           beats: scene.beats.map((beat) =>
             beat.dialogue?.speaker === previous
               ? {
                   ...beat,
+                  summary: replaceLiteralText(beat.summary, previous, currentName),
                   dialogue: {
                     speaker: currentName,
-                    content: beat.dialogue.content,
+                    content: replaceLiteralText(
+                      beat.dialogue.content,
+                      previous,
+                      currentName
+                    ),
                   },
                 }
-              : beat
+              : {
+                  ...beat,
+                  summary: replaceLiteralText(beat.summary, previous, currentName),
+                  dialogue: beat.dialogue
+                    ? {
+                        speaker: beat.dialogue.speaker,
+                        content: replaceLiteralText(
+                          beat.dialogue.content,
+                          previous,
+                          currentName
+                        ),
+                      }
+                    : beat.dialogue,
+                }
           ),
         })),
       })),
@@ -671,9 +709,26 @@ export default function ScriptWorkshopPage() {
       ...current,
       chapters: current.chapters.map((chapter) => ({
         ...chapter,
+        summary: replaceLiteralText(chapter.summary, previous, currentName),
         scenes: chapter.scenes.map((scene) => ({
           ...scene,
           location: scene.location === previous ? currentName : scene.location,
+          goal: replaceLiteralText(scene.goal, previous, currentName),
+          outcome: replaceLiteralText(scene.outcome, previous, currentName),
+          beats: scene.beats.map((beat) => ({
+            ...beat,
+            summary: replaceLiteralText(beat.summary, previous, currentName),
+            dialogue: beat.dialogue
+              ? {
+                  speaker: beat.dialogue.speaker,
+                  content: replaceLiteralText(
+                    beat.dialogue.content,
+                    previous,
+                    currentName
+                  ),
+                }
+              : beat.dialogue,
+          })),
         })),
       })),
     }))
@@ -813,11 +868,52 @@ export default function ScriptWorkshopPage() {
     setFeedback("YAML 文件已开始下载。")
   }
 
+  async function handleSaveResult() {
+    if (!activeResult || !liveYaml) {
+      toast.error("当前没有可保存的剧本结果。")
+      return
+    }
+
+    setError("")
+    setFeedback("")
+    setIsSaving(true)
+    try {
+      const response = await saveScriptResult(activeResult.id, { yaml: liveYaml })
+      if (response.code !== 0 || !response.data) {
+        toast.error(response.msg || "保存失败，请稍后重试。")
+        return
+      }
+
+      const nextResult = makeResultFromDetail(response.data)
+      if (!nextResult) {
+        toast.error("保存成功，但返回结果为空。")
+        return
+      }
+
+      setResultForEditing(nextResult)
+      setSelectedTaskId(nextResult.id)
+      toast.success("修改已保存")
+      await loadHistory()
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "保存失败，请稍后重试。"))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   const semanticTree = useMemo(() => buildSemanticTree(editableDocument), [editableDocument])
   const liveYaml = useMemo(
     () => (editableDocument ? serializeScriptYaml(editableDocument) : activeResult?.yaml ?? ""),
     [editableDocument, activeResult?.yaml]
   )
+  const savedYamlBaseline = useMemo(() => {
+    if (!activeResult?.yaml) {
+      return ""
+    }
+
+    const parsed = parseScriptYaml(activeResult.yaml)
+    return parsed ? serializeScriptYaml(parsed) : activeResult.yaml
+  }, [activeResult?.yaml])
   const consistency = editableDocument
     ? normalizeConsistency(buildScriptConsistency(editableDocument))
     : activeResult?.consistencyReport ?? {
@@ -892,6 +988,7 @@ export default function ScriptWorkshopPage() {
         characters: 0,
         settings: 0,
       }
+  const hasUnsavedChanges = Boolean(activeResult && liveYaml && liveYaml !== savedYamlBaseline)
   return (
     <div className="min-h-screen bg-[#f6f6f7] text-slate-900">
       {isSubmitting ? (
@@ -1313,7 +1410,28 @@ export default function ScriptWorkshopPage() {
                       title={activeResult.metadata.title}
                       description="结果详情保持简单干净，只展示最关键的信息。"
                       actions={
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {hasUnsavedChanges ? (
+                            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
+                              有未保存修改
+                            </span>
+                          ) : null}
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleSaveResult()}
+                            disabled={isSaving || !hasUnsavedChanges}
+                            className="bg-slate-900 text-white hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
+                          >
+                            {isSaving ? (
+                              <>
+                                <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                                保存中...
+                              </>
+                            ) : (
+                              "保存修改"
+                            )}
+                          </Button>
                           {([
                             { key: "overview", label: "概览" },
                             { key: "yaml", label: "YAML" },
@@ -1886,7 +2004,7 @@ export default function ScriptWorkshopPage() {
                             <div className="space-y-3">
                               {editableDocument.dramatis_personae.map((character, index) => (
                                 <div
-                                  key={`${character.name}-${index}`}
+                                  key={`character-${index}`}
                                   className="space-y-3 rounded-[20px] border border-black/6 bg-white p-4"
                                 >
                                   <div className="grid gap-3 md:grid-cols-2">
@@ -1894,13 +2012,22 @@ export default function ScriptWorkshopPage() {
                                       <Label className="text-slate-600">角色名</Label>
                                       <Input
                                         value={character.name}
+                                        onFocus={() => {
+                                          characterRenameOriginRef.current[index] = character.name
+                                        }}
                                         onChange={(event) => {
                                           const nextName = event.target.value
                                           updateScriptCharacter(index, (item) => ({
                                             ...item,
                                             name: nextName,
                                           }))
-                                          renameCharacterReferences(character.name, nextName)
+                                        }}
+                                        onBlur={(event) => {
+                                          const previousName =
+                                            characterRenameOriginRef.current[index] ?? character.name
+                                          const nextName = event.target.value
+                                          renameCharacterReferences(previousName, nextName)
+                                          delete characterRenameOriginRef.current[index]
                                         }}
                                         placeholder="请输入角色名"
                                         className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
@@ -1995,7 +2122,7 @@ export default function ScriptWorkshopPage() {
                             <div className="space-y-3">
                               {editableDocument.settings.map((setting, index) => (
                                 <div
-                                  key={`${setting.name}-${index}`}
+                                  key={`setting-${index}`}
                                   className="space-y-3 rounded-[20px] border border-black/6 bg-white p-4"
                                 >
                                   <div className="grid gap-3 md:grid-cols-2">
@@ -2003,13 +2130,22 @@ export default function ScriptWorkshopPage() {
                                       <Label className="text-slate-600">地点名</Label>
                                       <Input
                                         value={setting.name}
+                                        onFocus={() => {
+                                          settingRenameOriginRef.current[index] = setting.name
+                                        }}
                                         onChange={(event) => {
                                           const nextName = event.target.value
                                           updateScriptSetting(index, (item) => ({
                                             ...item,
                                             name: nextName,
                                           }))
-                                          renameSettingReferences(setting.name, nextName)
+                                        }}
+                                        onBlur={(event) => {
+                                          const previousName =
+                                            settingRenameOriginRef.current[index] ?? setting.name
+                                          const nextName = event.target.value
+                                          renameSettingReferences(previousName, nextName)
+                                          delete settingRenameOriginRef.current[index]
                                         }}
                                         placeholder="请输入地点名"
                                         className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"

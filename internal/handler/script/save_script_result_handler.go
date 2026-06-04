@@ -20,7 +20,7 @@ func SaveScriptResultHandler(svc *svc.ServiceContext) gin.HandlerFunc {
 		}
 
 		var req types.SaveScriptResultReq
-		if err := httpn.BindJSON(c, &req); err != nil {
+		if err := c.ShouldBindJSON(&req); err != nil {
 			httpn.Error(c, err)
 			return
 		}
