@@ -3,6 +3,16 @@ import { Brush } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
+function getUsernameInitial(username?: string) {
+  const trimmed = username?.trim()
+  if (!trimmed) {
+    return "?"
+  }
+
+  const firstChar = Array.from(trimmed)[0] ?? "?"
+  return /^[a-zA-Z]$/.test(firstChar) ? firstChar.toUpperCase() : firstChar
+}
+
 export type SidebarItem = {
   key: string
   label: string
@@ -14,19 +24,21 @@ export function AppSidebar({
   activeKey,
   items,
   username,
-  footerLabel,
   onLogoClick,
   authActionLabel = "登录",
+  animateItemsOnMount = false,
   onAuthAction,
 }: {
   activeKey: string
   items: SidebarItem[]
   username?: string
-  footerLabel?: string
   onLogoClick?: () => void
   authActionLabel?: string
+  animateItemsOnMount?: boolean
   onAuthAction: () => void
 }) {
+  const userInitial = getUsernameInitial(username)
+
   return (
     <aside className="hidden lg:block w-[72px] shrink-0">
       <div className="fixed left-4 top-0 flex h-screen w-[72px] flex-col items-center justify-between px-1 py-6">
@@ -40,29 +52,38 @@ export function AppSidebar({
             <Brush className="h-4 w-4" strokeWidth={2.1} />
           </button>
           <div className="flex flex-col items-center gap-6">
-            {items.map((item) => {
+            {items.map((item, index) => {
               const active = activeKey === item.key
               return (
                 <button
                   key={item.key}
                   type="button"
                   onClick={item.onClick}
-                  className="flex w-full flex-col items-center gap-2"
+                  className={cn(
+                    "group flex w-full flex-col items-center gap-2",
+                    animateItemsOnMount &&
+                      "animate-in fade-in slide-in-from-left-3 duration-700 fill-mode-both ease-out"
+                  )}
+                  style={
+                    animateItemsOnMount
+                      ? { animationDelay: `${120 + index * 90}ms` }
+                      : undefined
+                  }
                 >
                   <div
                     className={cn(
-                      "flex h-6 w-6 items-center justify-center rounded-2xl transition-colors",
+                      "flex h-6 w-6 items-center justify-center rounded-2xl transition-[color,transform] duration-300",
                       active
                         ? "text-slate-950"
-                        : "text-slate-500 hover:text-slate-800"
+                        : "text-slate-500 group-hover:text-slate-800"
                     )}
                   >
                     <item.icon className="h-4 w-4" strokeWidth={2.2} />
                   </div>
                   <span
                     className={cn(
-                      "text-xs font-medium tracking-tight",
-                      active ? "text-slate-950" : "text-slate-500"
+                      "text-xs font-medium tracking-tight transition-colors duration-300",
+                      active ? "text-slate-950" : "text-slate-500 group-hover:text-slate-800"
                     )}
                   >
                     {item.label}
@@ -74,10 +95,12 @@ export function AppSidebar({
         </div>
 
         <div className="flex w-full flex-col items-center gap-4 pb-2">
-          <div className="text-center">
-            <p className="mt-1 text-sm font-medium text-slate-700">
-              {username || "未登录"}
-            </p>
+          <div
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-600"
+            aria-label={username || "未登录"}
+            title={username || "未登录"}
+          >
+            {userInitial}
           </div>
           <Button
             variant="outline"
@@ -86,9 +109,6 @@ export function AppSidebar({
           >
             <p className="text-xs">{authActionLabel}</p>
           </Button>
-          {footerLabel ? (
-            <div className="text-center text-xs text-slate-400">{footerLabel}</div>
-          ) : null}
         </div>
       </div>
     </aside>
