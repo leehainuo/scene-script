@@ -11,7 +11,6 @@ import {
   FileText,
   GripVertical,
   History,
-  LayoutTemplate,
   LoaderCircle,
   ListFilter,
   RefreshCw,
@@ -1401,148 +1400,74 @@ export default function ScriptWorkshopPage() {
 
                 <StudioPanel
                   eyebrow="Workspace"
-                  title="创作输入面板"
-                  description="像即梦的主输入框一样，把注意力集中在内容输入本身。"
-                  className="rounded-[30px] border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]"
+                  title="开始输入你的小说章节"
+                  description="主输入区负责内容，右侧参数区负责改编风格，避免所有控件挤在同一层。"
+                  className="overflow-hidden rounded-[34px] border-black/6 bg-white/92 shadow-[0_24px_80px_rgba(15,23,42,0.08)]"
                 >
-                  <form className="space-y-6" onSubmit={handleSubmit}>
-                    <div className="grid gap-4 lg:grid-cols-[116px_minmax(0,1fr)]">
-                      <div className="flex h-28 items-center justify-center rounded-[24px] bg-slate-100 text-slate-400">
-                        <LayoutTemplate className="h-7 w-7" />
-                      </div>
-                      <div className="space-y-4">
-                        <div className="flex flex-wrap gap-2">
-                          {draft.chapters.map((chapter, index) => (
-                            <button
-                              key={`${chapter.title}-${index}`}
-                              type="button"
-                              onClick={() => setActiveChapterIndex(index)}
-                              className={cn(
-                                "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                                activeChapterIndex === index
-                                  ? "border-slate-900 bg-slate-900 text-white"
-                                  : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
-                              )}
-                            >
-                              第 {index + 1} 章
-                            </button>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={addChapter}
-                            className="rounded-full border border-dashed border-black/10 px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50"
-                          >
-                            + 新增章节
-                          </button>
-                        </div>
-
-                        <Input
-                          value={activeChapter?.title ?? ""}
-                          onChange={(event) =>
-                            updateChapter(activeChapterIndex, "title", event.target.value)
-                          }
-                          placeholder="给这一章起一个标题"
-                          className="h-11 border-black/8 bg-slate-50 text-slate-900 placeholder:text-slate-400"
-                        />
-
-                        <textarea
-                          value={activeChapter?.text ?? ""}
-                          onChange={(event) =>
-                            updateChapter(activeChapterIndex, "text", event.target.value)
-                          }
-                          placeholder="把这一章的小说正文粘贴到这里..."
-                          className="min-h-[220px] w-full rounded-[24px] border border-black/8 bg-slate-50 px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-slate-900/10"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <div className="space-y-3">
-                        <Label className="text-slate-600">体裁</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {GENRE_OPTIONS.map((item) => (
-                            <button
-                              key={item}
-                              type="button"
-                              onClick={() =>
-                                setDraft((prev) => ({ ...prev, genre: item }))
-                              }
-                              className={cn(
-                                "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                                draft.genre === item
-                                  ? "border-sky-200 bg-sky-50 text-sky-700"
-                                  : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
-                              )}
-                            >
-                              {item}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        <Label className="text-slate-600">语气</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {TONE_OPTIONS.map((item) => (
-                            <button
-                              key={item}
-                              type="button"
-                              onClick={() =>
-                                setDraft((prev) => ({ ...prev, tone: item }))
-                              }
-                              className={cn(
-                                "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                                draft.tone === item
-                                  ? "border-slate-200 bg-slate-900 text-white"
-                                  : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
-                              )}
-                            >
-                              {item}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        <Label className="text-slate-600">节奏</Label>
-                        <div className="space-y-2">
-                          {PACING_OPTIONS.map((option) => (
-                            <button
-                              key={option.value}
-                              type="button"
-                              onClick={() =>
-                                setDraft((prev) => ({ ...prev, pacing: option.value }))
-                              }
-                              className={cn(
-                                "flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition-colors",
-                                draft.pacing === option.value
-                                  ? "border-sky-200 bg-sky-50"
-                                  : "border-black/8 bg-white hover:bg-slate-50"
-                              )}
-                            >
-                              <div>
-                                <p className="text-sm font-medium text-slate-800">
-                                  {option.label}
-                                </p>
-                                <p className="mt-1 text-xs text-slate-400">
-                                  {option.hint}
-                                </p>
-                              </div>
-                              <div
+                  <form className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={handleSubmit}>
+                    <div className="space-y-5">
+                      <div className="rounded-[28px] border border-black/6 bg-slate-50/80 p-4 sm:p-5">
+                        <div className="flex flex-col gap-4 border-b border-black/6 pb-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
+                                当前输入
+                              </p>
+                              <p className="mt-1 text-base font-semibold text-slate-900">
+                                第 {activeChapterIndex + 1} 章
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-black/8 bg-white px-3 py-1 text-xs text-slate-500">
+                              共 {draft.chapters.length} 章
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {draft.chapters.map((chapter, index) => (
+                              <button
+                                key={`${chapter.title}-${index}`}
+                                type="button"
+                                onClick={() => setActiveChapterIndex(index)}
                                 className={cn(
-                                  "h-3.5 w-3.5 rounded-full border",
-                                  draft.pacing === option.value
-                                    ? "border-slate-900 bg-slate-900"
-                                    : "border-slate-300"
+                                  "rounded-full border px-3 py-1.5 text-sm transition-colors",
+                                  activeChapterIndex === index
+                                    ? "border-slate-900 bg-slate-900 text-white"
+                                    : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
                                 )}
-                              />
+                              >
+                                第 {index + 1} 章
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={addChapter}
+                              className="rounded-full border border-dashed border-black/10 bg-white px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50"
+                            >
+                              + 新增章节
                             </button>
-                          ))}
+                          </div>
+                        </div>
+
+                        <div className="mt-5 space-y-4">
+                          <Input
+                            value={activeChapter?.title ?? ""}
+                            onChange={(event) =>
+                              updateChapter(activeChapterIndex, "title", event.target.value)
+                            }
+                            placeholder="给这一章起一个更容易理解的标题"
+                            className="h-12 rounded-2xl border-black/8 bg-white text-base text-slate-900 placeholder:text-slate-400"
+                          />
+
+                          <textarea
+                            value={activeChapter?.text ?? ""}
+                            onChange={(event) =>
+                              updateChapter(activeChapterIndex, "text", event.target.value)
+                            }
+                            placeholder="把这一章的小说正文粘贴到这里，尽量保持段落清晰。AI 会基于这些内容生成章节、场景和节拍结构。"
+                            className="min-h-[420px] w-full rounded-[26px] border border-black/8 bg-white px-5 py-5 text-[15px] leading-8 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
+                          />
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap gap-2">
                         {[
                           "至少 3 章",
@@ -1552,43 +1477,158 @@ export default function ScriptWorkshopPage() {
                         ].map((item) => (
                           <span
                             key={item}
-                            className="rounded-full border border-black/8 bg-slate-50 px-3 py-1 text-xs text-slate-500"
+                            className="rounded-full border border-black/8 bg-white px-3 py-1 text-xs text-slate-500"
                           >
                             {item}
                           </span>
                         ))}
                       </div>
+                    </div>
 
-                      <div className="flex flex-wrap gap-3">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {
-                            setDraft(createDefaultDraft())
-                            setActiveChapterIndex(0)
-                            setFeedback("草稿已重置。")
-                          }}
-                          className="border-black/8 bg-white text-slate-700 hover:bg-slate-50"
-                        >
-                          重置
-                        </Button>
-                        <Button
-                          type="submit"
-                          disabled={isSubmitting}
-                          className="h-11 rounded-2xl bg-slate-900 px-6 text-white hover:bg-slate-800"
-                        >
-                          {isSubmitting ? (
-                            <>
-                              <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-                              生成中...
-                            </>
-                          ) : (
-                            <>
-                              <Wand2 className="mr-2 h-4 w-4" />
-                              开始生成
-                            </>
-                          )}
-                        </Button>
+                    <div className="space-y-4 xl:sticky xl:top-8 xl:self-start">
+                      <div className="rounded-[28px] border border-black/6 bg-slate-50/80 p-5">
+                        <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
+                          改编设定
+                        </p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">
+                          先定风格，再开始生成
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-slate-500">
+                          这些参数不需要很多，但会明显影响第一版剧本的气质和节奏。
+                        </p>
+
+                        <div className="mt-5 space-y-5">
+                          <div className="space-y-3">
+                            <Label className="text-slate-600">体裁</Label>
+                            <div className="flex flex-wrap gap-2">
+                              {GENRE_OPTIONS.map((item) => (
+                                <button
+                                  key={item}
+                                  type="button"
+                                  onClick={() =>
+                                    setDraft((prev) => ({ ...prev, genre: item }))
+                                  }
+                                  className={cn(
+                                    "rounded-full border px-3 py-1.5 text-sm transition-colors",
+                                    draft.genre === item
+                                      ? "border-sky-200 bg-sky-50 text-sky-700"
+                                      : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
+                                  )}
+                                >
+                                  {item}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <Label className="text-slate-600">语气</Label>
+                            <div className="flex flex-wrap gap-2">
+                              {TONE_OPTIONS.map((item) => (
+                                <button
+                                  key={item}
+                                  type="button"
+                                  onClick={() =>
+                                    setDraft((prev) => ({ ...prev, tone: item }))
+                                  }
+                                  className={cn(
+                                    "rounded-full border px-3 py-1.5 text-sm transition-colors",
+                                    draft.tone === item
+                                      ? "border-slate-200 bg-slate-900 text-white"
+                                      : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
+                                  )}
+                                >
+                                  {item}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <Label className="text-slate-600">节奏</Label>
+                            <div className="space-y-2">
+                              {PACING_OPTIONS.map((option) => (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  onClick={() =>
+                                    setDraft((prev) => ({ ...prev, pacing: option.value }))
+                                  }
+                                  className={cn(
+                                    "flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition-colors",
+                                    draft.pacing === option.value
+                                      ? "border-sky-200 bg-sky-50"
+                                      : "border-black/8 bg-white hover:bg-slate-50"
+                                  )}
+                                >
+                                  <div>
+                                    <p className="text-sm font-medium text-slate-800">
+                                      {option.label}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-400">
+                                      {option.hint}
+                                    </p>
+                                  </div>
+                                  <div
+                                    className={cn(
+                                      "h-3.5 w-3.5 rounded-full border",
+                                      draft.pacing === option.value
+                                        ? "border-slate-900 bg-slate-900"
+                                        : "border-slate-300"
+                                    )}
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[28px] bg-slate-950 p-5 text-white shadow-[0_24px_60px_rgba(15,23,42,0.24)]">
+                        <p className="text-xs uppercase tracking-[0.22em] text-white/45">
+                          生成动作
+                        </p>
+                        <p className="mt-2 text-lg font-semibold">准备把这几章转成剧本</p>
+                        <p className="mt-2 text-sm leading-6 text-white/68">
+                          当前会基于 {draft.chapters.length} 章内容，按照「{draft.genre} / {draft.tone} /{" "}
+                          {draft.pacing === "fast"
+                            ? "快节奏"
+                            : draft.pacing === "medium"
+                              ? "中节奏"
+                              : "慢节奏"}
+                          」生成第一版结构化剧本。
+                        </p>
+                        <div className="mt-5 flex flex-col gap-3">
+                          <Button
+                            type="submit"
+                            disabled={isSubmitting}
+                            className="h-12 rounded-2xl bg-white text-slate-950 hover:bg-slate-100"
+                          >
+                            {isSubmitting ? (
+                              <>
+                                <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                                生成中...
+                              </>
+                            ) : (
+                              <>
+                                <Wand2 className="mr-2 h-4 w-4" />
+                                开始生成
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setDraft(createDefaultDraft())
+                              setActiveChapterIndex(0)
+                              setFeedback("草稿已重置。")
+                            }}
+                            className="h-11 rounded-2xl border-white/12 bg-white/6 text-white hover:bg-white/10 hover:text-white"
+                          >
+                            重置草稿
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </form>
