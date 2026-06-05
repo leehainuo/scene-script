@@ -241,22 +241,22 @@ function getStatusMeta(status: string) {
     case "succeeded":
       return {
         label: "已完成",
-        badgeClass: "border-emerald-300/20 bg-emerald-400/12 text-emerald-200",
+        badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
       }
     case "failed":
       return {
         label: "生成失败",
-        badgeClass: "border-rose-300/20 bg-rose-400/12 text-rose-200",
+        badgeClass: "border-rose-200 bg-rose-50 text-rose-700",
       }
     case "running":
       return {
         label: "生成中",
-        badgeClass: "border-sky-300/20 bg-sky-400/12 text-sky-200",
+        badgeClass: "border-amber-200 bg-amber-50 text-amber-700",
       }
     default:
       return {
         label: "等待中",
-        badgeClass: "border-white/10 bg-white/8 text-white/68",
+        badgeClass: "border-amber-200 bg-amber-50 text-amber-700",
       }
   }
 }
@@ -1937,7 +1937,12 @@ export default function ScriptWorkshopPage() {
                                     {item.genre} / {item.tone} / {item.pacing}
                                   </p>
                                 </div>
-                                <span className="rounded-full border border-black/8 bg-slate-50 px-3 py-1 text-xs text-slate-500">
+                                <span
+                                  className={cn(
+                                    "rounded-full border px-3 py-1 text-xs font-medium",
+                                    meta.badgeClass
+                                  )}
+                                >
                                   {meta.label}
                                 </span>
                               </div>
