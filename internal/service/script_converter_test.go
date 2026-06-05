@@ -246,3 +246,16 @@ func TestConvertRepairsSchemaViolations(t *testing.T) {
 		t.Fatalf("unexpected summary after repair: %#v", result.Summary)
 	}
 }
+
+func TestSanitizeQuotedYAMLTextConvertsBrokenQuotedSummary(t *testing.T) {
+	raw := "chapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"他抖开油纸包，墨迹晕染：‘我封他们进钟，因钟能困住时间…可困住我的，是他们的时辰。’”\n    scenes: []\n"
+
+	sanitized := sanitizeQuotedYAMLText(raw)
+
+	if !strings.Contains(sanitized, "summary: |-") {
+		t.Fatalf("expected summary to be rewritten as block scalar, got %s", sanitized)
+	}
+	if !strings.Contains(sanitized, "  他抖开油纸包") {
+		t.Fatalf("expected rewritten block scalar body, got %s", sanitized)
+	}
+}

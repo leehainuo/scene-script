@@ -611,6 +611,7 @@ export default function ScriptWorkshopPage() {
   const [wrapYaml, setWrapYaml] = useState(true)
   const [generationStepIndex, setGenerationStepIndex] = useState(0)
   const [generationStepText, setGenerationStepText] = useState(GENERATION_STEPS[0])
+  const [showGenerationOverlay, setShowGenerationOverlay] = useState(false)
   const [draggedBeatId, setDraggedBeatId] = useState<string | null>(null)
   const [dragOverBeatId, setDragOverBeatId] = useState<string | null>(null)
   const [registryTab, setRegistryTab] = useState<RegistryTab>("characters")
@@ -648,6 +649,18 @@ export default function ScriptWorkshopPage() {
 
     return () => window.clearInterval(timer)
   }, [isSubmitting])
+
+  useEffect(() => {
+    if (!showGenerationOverlay) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setShowGenerationOverlay(false)
+    }, 900)
+
+    return () => window.clearTimeout(timer)
+  }, [showGenerationOverlay])
 
   useEffect(() => {
     if (!isStatusMenuOpen) return
@@ -729,6 +742,7 @@ export default function ScriptWorkshopPage() {
       if (event.status === "succeeded") {
         closeTaskEventStream(taskId)
         setIsSubmitting(false)
+        setShowGenerationOverlay(false)
         setGenerationStepIndex(0)
         setGenerationStepText(GENERATION_STEPS[0])
         setTaskProgressMessage("")
@@ -740,6 +754,7 @@ export default function ScriptWorkshopPage() {
       if (event.status === "failed") {
         closeTaskEventStream(taskId)
         setIsSubmitting(false)
+        setShowGenerationOverlay(false)
         setGenerationStepIndex(0)
         setGenerationStepText(GENERATION_STEPS[0])
         setTaskProgressMessage(event.error || event.message || "任务执行失败。")
@@ -811,6 +826,7 @@ export default function ScriptWorkshopPage() {
           setTaskProgressMessage("任务仍在处理中，正在同步后台进度。")
           setGenerationStepText(getGenerationStepText(detail.metadata.status, taskProgressMessage))
           setIsSubmitting(true)
+          setShowGenerationOverlay(false)
           startTaskEventStream(taskId, `/api/v1/script/${taskId}/events`)
         } else {
           setTaskProgressMessage(detail.metadata.err_msg || "")
@@ -1230,6 +1246,7 @@ export default function ScriptWorkshopPage() {
 
     setGenerationStepIndex(0)
     setIsSubmitting(true)
+    setShowGenerationOverlay(true)
     try {
       const response = await convertScript({
         ...draft,
@@ -1269,6 +1286,7 @@ export default function ScriptWorkshopPage() {
     } finally {
       if (!taskEventSourceRef.current) {
         setIsSubmitting(false)
+        setShowGenerationOverlay(false)
         setGenerationStepIndex(0)
         setGenerationStepText(GENERATION_STEPS[0])
       }
@@ -1493,7 +1511,7 @@ export default function ScriptWorkshopPage() {
   const hasUnsavedChanges = Boolean(activeResult && liveYaml && liveYaml !== savedYamlBaseline)
   return (
     <div className="min-h-screen bg-[#f6f6f7] text-slate-900">
-      {isSubmitting ? (
+      {showGenerationOverlay ? (
         <GenerationOverlay
           stepText={generationStepText || GENERATION_STEPS[generationStepIndex]}
           chapterCount={draft.chapters.length}

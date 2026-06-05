@@ -196,7 +196,83 @@ func sanitizeLLMOutput(raw string) string {
 		trimmed = strings.TrimSpace(trimmed[idx:])
 	}
 
+	trimmed = sanitizeQuotedYAMLText(trimmed)
+
 	return trimmed
+}
+
+func sanitizeQuotedYAMLText(raw string) string {
+	lines := strings.Split(raw, "\n")
+	output := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.Contains(trimmed, `: "`) {
+			output = append(output, line)
+			continue
+		}
+
+		keyValueIdx := strings.Index(line, `: "`)
+		if keyValueIdx < 0 {
+			output = append(output, line)
+			continue
+		}
+
+		keyPart := line[:keyValueIdx]
+		valuePart := strings.TrimSpace(line[keyValueIdx+2:])
+		if valuePart == "" {
+			output = append(output, line)
+			continue
+		}
+
+		if !shouldConvertQuotedScalar(valuePart) {
+			output = append(output, line)
+			continue
+		}
+
+		unquoted := trimQuotedScalarEdge(valuePart)
+		indent := strings.Repeat(" ", len(keyPart)-len(strings.TrimLeft(keyPart, " "))+2)
+		output = append(output, keyPart+": |-")
+		for _, blockLine := range strings.Split(unquoted, "\n") {
+			output = append(output, indent+blockLine)
+		}
+	}
+	return strings.Join(output, "\n")
+}
+
+func shouldConvertQuotedScalar(value string) bool {
+	if value == "" || value[0] != '"' {
+		return false
+	}
+
+	if hasQuotedScalarTerminator(value) {
+		inner := trimQuotedScalarEdge(value)
+		return strings.Contains(inner, `"`) || strings.Contains(inner, "：") || strings.Contains(inner, "“") || strings.Contains(inner, "”")
+	}
+
+	return true
+}
+
+func hasQuotedScalarTerminator(value string) bool {
+	if value == "" {
+		return false
+	}
+	last := []rune(value)[len([]rune(value))-1]
+	return last == '"' || last == '”' || last == '“'
+}
+
+func trimQuotedScalarEdge(value string) string {
+	trimmed := strings.TrimPrefix(value, `"`)
+	for {
+		runes := []rune(trimmed)
+		if len(runes) == 0 {
+			return trimmed
+		}
+		last := runes[len(runes)-1]
+		if last != '"' && last != '”' && last != '“' {
+			return trimmed
+		}
+		trimmed = string(runes[:len(runes)-1])
+	}
 }
 
 func (sc *ScriptConverter) normalizeAndValidate(req ConvertRequest, rawContent string) (*ConvertResult, error) {

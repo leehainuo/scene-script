@@ -104,11 +104,14 @@ func allowQueryAccessToken(c *gin.Context) bool {
 	if c.Request.Method != http.MethodGet {
 		return false
 	}
+	if strings.TrimSpace(c.Query("access_token")) == "" {
+		return false
+	}
 	fullPath := c.FullPath()
 	if fullPath == "" {
 		fullPath = c.Request.URL.Path
 	}
-	return strings.HasSuffix(fullPath, "/events")
+	return strings.HasSuffix(fullPath, "/events") || strings.Contains(c.Request.URL.Path, "/events")
 }
 
 // GetUserID - Get user ID from context
