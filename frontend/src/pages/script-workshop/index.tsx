@@ -1698,12 +1698,6 @@ export default function ScriptWorkshopPage() {
                       {view === "structure" ? (
                         <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
                           <div className="space-y-4">
-                            <div className="rounded-[24px] border border-black/6 bg-slate-50 p-4">
-                              <p className="text-xs text-slate-400">结构树</p>
-                              <p className="mt-2 text-sm leading-6 text-slate-500">
-                                按章节、场景、节拍逐层查看。点击任意节点，中间表单会自动切到对应内容。
-                              </p>
-                            </div>
                             <div className="max-h-[560px] overflow-y-auto rounded-[24px] border border-black/6 bg-slate-50 p-3">
                               <div className="space-y-1">
                                 {semanticTree.map((node) => (
