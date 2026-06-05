@@ -1,7 +1,5 @@
 import type { ReactNode } from "react"
-import { LoaderCircle } from "lucide-react"
 import { StudioPanel } from "@/components/studio/studio-panel"
-import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 type ResultView = "overview" | "yaml" | "structure"
@@ -9,9 +7,7 @@ type ResultView = "overview" | "yaml" | "structure"
 type ScriptDetailHeaderProps = {
   title: string
   hasUnsavedChanges: boolean
-  isSaving: boolean
   view: ResultView
-  onSave: () => void
   onViewChange: (view: ResultView) => void
   children: ReactNode
 }
@@ -25,9 +21,7 @@ const VIEW_OPTIONS: Array<{ key: ResultView; label: string }> = [
 export function ScriptDetailHeader({
   title,
   hasUnsavedChanges,
-  isSaving,
   view,
-  onSave,
   onViewChange,
   children,
 }: ScriptDetailHeaderProps) {
@@ -43,22 +37,6 @@ export function ScriptDetailHeader({
               有未保存修改
             </span>
           ) : null}
-          <Button
-            type="button"
-            size="sm"
-            onClick={onSave}
-            disabled={isSaving || !hasUnsavedChanges}
-            className="h-11 rounded-[18px] bg-slate-900 px-4 text-white hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
-          >
-            {isSaving ? (
-              <>
-                <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-                保存中...
-              </>
-            ) : (
-              "保存修改"
-            )}
-          </Button>
           {VIEW_OPTIONS.map((item) => (
             <button
               key={item.key}

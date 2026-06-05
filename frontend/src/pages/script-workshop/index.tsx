@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import { ConsistencyPanel } from "@/components/script-workshop/consistency-panel"
 import { ScriptDetailHeader } from "@/components/script-workshop/detail-header"
+import { FloatingSaveButton } from "@/components/script-workshop/floating-save-button"
 import { GenerationOverlay } from "@/components/script-workshop/generation-overlay"
 import { RenameConfirmDialog } from "@/components/script-workshop/rename-confirm-dialog"
 import { AppSidebar } from "@/components/studio/app-sidebar"
@@ -1776,9 +1777,7 @@ export default function ScriptWorkshopPage() {
                     <ScriptDetailHeader
                       title={activeResult.metadata.title}
                       hasUnsavedChanges={hasUnsavedChanges}
-                      isSaving={isSaving}
                       view={view}
-                      onSave={() => void handleSaveResult()}
                       onViewChange={setView}
                     >
                       {view === "overview" ? (
@@ -2806,6 +2805,13 @@ export default function ScriptWorkshopPage() {
           setRenameConfirm(null)
         }}
       />
+      {sidebarView === "detail" && activeResult ? (
+        <FloatingSaveButton
+          isSaving={isSaving}
+          hasUnsavedChanges={hasUnsavedChanges}
+          onClick={() => void handleSaveResult()}
+        />
+      ) : null}
     </div>
   )
 }
