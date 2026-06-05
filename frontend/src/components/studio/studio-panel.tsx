@@ -9,6 +9,8 @@ export function StudioPanel({
   actions,
   className,
   contentClassName,
+  animateOnMount,
+  animationDelayMs,
 }: {
   eyebrow?: string
   title: string
@@ -17,13 +19,18 @@ export function StudioPanel({
   actions?: ReactNode
   className?: string
   contentClassName?: string
+  animateOnMount?: boolean
+  animationDelayMs?: number
 }) {
   return (
     <section
       className={cn(
         "rounded-[28px] border border-white/60 bg-white/72 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_28px_70px_rgba(15,23,42,0.12)]",
+        animateOnMount &&
+          "animate-in fade-in slide-in-from-bottom-2 duration-500 ease-out fill-mode-both",
         className
       )}
+      style={animateOnMount ? { animationDelay: `${animationDelayMs ?? 0}ms` } : undefined}
     >
       <div className="flex items-start justify-between gap-4 border-b border-black/5 px-5 py-4">
         <div className="space-y-1.5">

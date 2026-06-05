@@ -167,6 +167,8 @@ export function DetailView({
               ? "任务状态会实时同步，完成后会自动载入最终 YAML 与结构结果。"
               : "先在工作台生成剧本，或从作品中点开一个历史结果。"
           }
+          animateOnMount
+          animationDelayMs={0}
           className="rounded-[30px] border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]"
         >
           {activeTaskMeta ? (
@@ -814,6 +816,8 @@ export function DetailView({
             eyebrow="Registry"
             title="人物表与地点表"
             description="在这里维护全剧角色和地点注册表；改名时会自动同步场景视角、对白说话人和场景地点引用。"
+            animateOnMount
+            animationDelayMs={80}
             className="rounded-[30px] border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]"
           >
             {!editableDocument ? (

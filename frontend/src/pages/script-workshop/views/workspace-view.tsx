@@ -108,6 +108,8 @@ export function WorkspaceView({
         eyebrow="Workspace"
         title="开始输入你的小说章节"
         description="主输入区负责内容，右侧参数区负责改编风格，避免所有控件挤在同一层。"
+        animateOnMount
+        animationDelayMs={40}
         actions={
           <div className="inline-flex rounded-[20px] border border-black/8 bg-white p-1 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
             <button
