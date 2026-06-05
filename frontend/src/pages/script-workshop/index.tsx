@@ -1333,6 +1333,8 @@ export default function ScriptWorkshopPage() {
   function handleResetDraft() {
     setDraft(createDefaultDraft())
     setActiveChapterIndex(0)
+    setImportSourceText("")
+    setImportedChapters([])
     setActiveImportedChapterIndex(0)
     setWorkspaceInputMode("chapter")
     toast.success("草稿已重置。")
