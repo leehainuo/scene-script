@@ -1,6 +1,7 @@
 import client, { LONG_TASK_REQUEST_TIMEOUT, buildApiUrl, getAccessToken } from "@/lib/axios"
 import type {
   ApiResponse,
+  DeleteScriptResponse,
   SaveScriptResultRequest,
   ScriptConvertRequest,
   ScriptConvertResponse,
@@ -42,6 +43,20 @@ export const saveScriptResult = async (
   const response = await client.put<ApiResponse<ScriptDetailResponse>>(
     `/script/${id}/result`,
     data
+  )
+  return response.data
+}
+
+export const retryScriptTask = async (id: string) => {
+  const response = await client.post<ApiResponse<ScriptConvertResponse>>(
+    `/script/${id}/retry`
+  )
+  return response.data
+}
+
+export const deleteScriptTask = async (id: string) => {
+  const response = await client.delete<ApiResponse<DeleteScriptResponse>>(
+    `/script/${id}`
   )
   return response.data
 }

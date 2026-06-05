@@ -43,10 +43,12 @@ import { getAccessToken, getRefreshToken } from "@/lib/axios"
 import { toast } from "sonner"
 import {
   convertScript,
+  deleteScriptTask,
   getScriptDetail,
   getScriptHistory,
   logout,
   openScriptEventStream,
+  retryScriptTask,
   saveScriptResult,
 } from "@/services"
 import { useAuthStore } from "@/stores"
@@ -730,6 +732,10 @@ export default function ScriptWorkshopPage() {
   const [importSourceText, setImportSourceText] = useState("")
   const [importedChapters, setImportedChapters] = useState<ImportedChapterDraft[]>([])
   const [activeImportedChapterIndex, setActiveImportedChapterIndex] = useState(0)
+  const [historyActionState, setHistoryActionState] = useState<{
+    taskId: string
+    kind: "retry" | "delete"
+  } | null>(null)
   const statusMenuRef = useRef<HTMLDivElement | null>(null)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
   const characterRenameOriginRef = useRef<Record<number, string>>({})
@@ -1514,6 +1520,65 @@ export default function ScriptWorkshopPage() {
 
   async function handleLoadHistory(item: ScriptHistoryItem) {
     await loadDetailById(item.id, `已载入「${item.title}」的结果，你可以继续审阅结构。`)
+  }
+
+  async function handleRetryHistory(item: ScriptHistoryItem) {
+    setHistoryActionState({ taskId: item.id, kind: "retry" })
+    try {
+      const response = await retryScriptTask(item.id)
+      if (response.code !== 0 || !response.data) {
+        toast.error(response.msg || "重试失败，请稍后再试。")
+        return
+      }
+
+      toast.success("已重新加入生成队列。")
+      await loadHistory()
+      await loadDetailById(response.data.id)
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "重试失败，请稍后再试。"))
+    } finally {
+      setHistoryActionState((current) =>
+        current?.taskId === item.id && current.kind === "retry" ? null : current
+      )
+    }
+  }
+
+  async function handleDeleteHistory(item: ScriptHistoryItem) {
+    const confirmed = window.confirm(
+      item.status === "failed"
+        ? `确定删除失败作品「${item.title}」吗？删除后它会从作品墙移除。`
+        : `确定删除作品「${item.title}」吗？删除后将无法恢复。`
+    )
+    if (!confirmed) {
+      return
+    }
+
+    setHistoryActionState({ taskId: item.id, kind: "delete" })
+    try {
+      const response = await deleteScriptTask(item.id)
+      if (response.code !== 0) {
+        toast.error(response.msg || "删除失败，请稍后再试。")
+        return
+      }
+
+      if (selectedTaskId === item.id) {
+        closeTaskEventStream(item.id)
+        setSelectedTaskId(null)
+        setActiveTaskMeta(null)
+        setResultForEditing(null)
+        setTaskProgressMessage("")
+        setSearchParams({ view: "history" })
+      }
+
+      setHistory((current) => current.filter((historyItem) => historyItem.id !== item.id))
+      toast.success("作品已删除。")
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "删除失败，请稍后再试。"))
+    } finally {
+      setHistoryActionState((current) =>
+        current?.taskId === item.id && current.kind === "delete" ? null : current
+      )
+    }
   }
 
   async function handleCopyYaml() {
@@ -2488,23 +2553,36 @@ export default function ScriptWorkshopPage() {
                       </div>
                     ) : (
                       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        {filteredHistory.map((item) => {
+                        {filteredHistory.map((item, index) => {
                           const meta = getStatusMeta(item.status)
                           const cardCopy = getHistoryCardCopy(item)
+                          const canRetry = item.status === "failed"
+                          const canDelete = item.status === "succeeded" || item.status === "failed"
+                          const isRetrying =
+                            historyActionState?.taskId === item.id && historyActionState.kind === "retry"
+                          const isDeleting =
+                            historyActionState?.taskId === item.id && historyActionState.kind === "delete"
                           return (
-                            <button
+                            <div
                               key={item.id}
-                              type="button"
+                              role="button"
+                              tabIndex={0}
                               onClick={() => void handleLoadHistory(item)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault()
+                                  void handleLoadHistory(item)
+                                }
+                              }}
                               className={cn(
-                                "w-full rounded-[24px] border px-5 py-5 text-left outline-none transition-[transform,box-shadow,border-color]",
+                                "group w-full rounded-[24px] border px-5 py-5 text-left outline-none transition-[transform,box-shadow,border-color]",
                                 "animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both",
                                 "flex min-h-[220px] flex-col justify-between shadow-[0_14px_40px_rgba(15,23,42,0.04)] focus-visible:border-sky-300 focus-visible:ring-3 focus-visible:ring-sky-100",
                                 selectedTaskId === item.id
                                   ? "border-slate-200 bg-slate-50 hover:border-sky-300 hover:-translate-y-0.5 hover:shadow-[0_18px_42px_rgba(15,23,42,0.08)]"
                                   : "border-black/6 bg-white hover:border-sky-300 hover:-translate-y-0.5 hover:shadow-[0_18px_42px_rgba(15,23,42,0.08)]"
                               )}
-                              style={{ animationDelay: `${Math.min(filteredHistory.indexOf(item), 8) * 60}ms` }}
+                              style={{ animationDelay: `${Math.min(index, 8) * 60}ms` }}
                             >
                               <div>
                                 <div className="flex items-start justify-between gap-4">
@@ -2516,14 +2594,56 @@ export default function ScriptWorkshopPage() {
                                       {formatScriptStyleSummary(item.genre, item.tone, item.pacing)}
                                     </p>
                                   </div>
-                                  <span
-                                    className={cn(
-                                      "text-xs font-medium",
-                                      meta.textClass
-                                    )}
-                                  >
-                                    {meta.label}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className={cn(
+                                        "text-xs font-medium",
+                                        meta.textClass
+                                      )}
+                                    >
+                                      {meta.label}
+                                    </span>
+                                    {canRetry || canDelete ? (
+                                      <div className="-mr-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                                        {canRetry ? (
+                                          <button
+                                            type="button"
+                                            disabled={isRetrying || isDeleting}
+                                            onClick={(event) => {
+                                              event.stopPropagation()
+                                              void handleRetryHistory(item)
+                                            }}
+                                            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-slate-900 disabled:pointer-events-none disabled:opacity-50"
+                                            aria-label={`重试 ${item.title}`}
+                                          >
+                                            {isRetrying ? (
+                                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                              <RefreshCw className="h-3.5 w-3.5" />
+                                            )}
+                                          </button>
+                                        ) : null}
+                                        {canDelete ? (
+                                          <button
+                                            type="button"
+                                            disabled={isRetrying || isDeleting}
+                                            onClick={(event) => {
+                                              event.stopPropagation()
+                                              void handleDeleteHistory(item)
+                                            }}
+                                            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-rose-600 disabled:pointer-events-none disabled:opacity-50"
+                                            aria-label={`删除 ${item.title}`}
+                                          >
+                                            {isDeleting ? (
+                                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                              <Trash2 className="h-3.5 w-3.5" />
+                                            )}
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                  </div>
                                 </div>
                                 <div className={cn("mt-4 rounded-[18px] px-3 py-3", cardCopy.toneClass)}>
                                   <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
@@ -2541,7 +2661,7 @@ export default function ScriptWorkshopPage() {
                                 <span>{formatDateTime(item.updated_at)}</span>
                                 <span>{item.source_chapters} 章输入</span>
                               </div>
-                            </button>
+                            </div>
                           )
                         })}
                       </div>

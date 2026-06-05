@@ -171,3 +171,7 @@ export interface SaveScriptResultRequest {
 export interface ScriptListParams extends PaginationParams {
   status?: "all" | "pending" | "running" | "succeeded" | "failed"
 }
+
+export interface DeleteScriptResponse {
+  id: string
+}

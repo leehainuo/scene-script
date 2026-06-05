@@ -28,6 +28,7 @@ type ScriptResultModel interface {
 	scriptResultModel
 	// BEGIN: customizable methods (preserved during code regeneration)
 	FindByTaskID(ctx context.Context, taskID string) (*ScriptResult, error)
+	DeleteByTaskID(ctx context.Context, taskID string) error
 	// END: customizable methods
 }
 
@@ -117,6 +118,13 @@ func (m *defaultScriptResultModel) FindByTaskID(ctx context.Context, taskID stri
 	default:
 		return nil, err
 	}
+}
+
+func (m *defaultScriptResultModel) DeleteByTaskID(ctx context.Context, taskID string) error {
+	query := `DELETE FROM ` + m.table + ` WHERE task_id = ?`
+
+	_, err := m.conn.ExecCtx(ctx, query, taskID)
+	return err
 }
 
 // END: customizable methods
