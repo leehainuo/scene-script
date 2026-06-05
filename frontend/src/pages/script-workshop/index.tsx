@@ -10,7 +10,7 @@ import {
   Download,
   FileText,
   GripVertical,
-  History,
+  LayoutGrid,
   LoaderCircle,
   ListFilter,
   RefreshCw,
@@ -1606,13 +1606,12 @@ export default function ScriptWorkshopPage() {
           <AppSidebar
             activeKey={sidebarView}
             username={user?.username}
-            footerLabel={activeStatus.label}
             onLogoClick={() => navigate("/")}
             authActionLabel="登出"
             onAuthAction={handleLogout}
             items={[
               { key: "workspace", label: "工作台", icon: Wand2, onClick: () => setSearchParams({ view: "workspace" }) },
-              { key: "history", label: "作品", icon: History, onClick: () => setSearchParams({ view: "history" }) },
+              { key: "history", label: "作品", icon: LayoutGrid, onClick: () => setSearchParams({ view: "history" }) },
               {
                 key: "detail",
                 label: "详情",
