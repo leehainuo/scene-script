@@ -914,7 +914,9 @@ export default function ScriptWorkshopPage() {
 
   function setResultForEditing(result: WorkshopResult | null) {
     setActiveResult(result)
-    setActiveTaskMeta(result?.metadata ?? null)
+    if (result) {
+      setActiveTaskMeta(result.metadata)
+    }
     setEditableDocument(result ? parseScriptYaml(result.yaml) : null)
     setRegistryTab("characters")
     setSelectedCharacterIndex(0)

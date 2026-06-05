@@ -48,6 +48,7 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) 
 	}
 
 	taskID := service.GenerateTaskID()
+	convertReq := l.buildConvertRequest(req)
 	logCtx := service.WithTaskLogContext(l.c, taskID, time.Now())
 	l.Debug("script convert request accepted",
 		service.TaskLogFields(logCtx, "accepted",
@@ -61,7 +62,7 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) 
 	scriptTask := &model.ScriptTask{
 		TaskID:         taskID,
 		UserID:         userID,
-		Title:          req.Chapters[0].Title,
+		Title:          service.BuildInitialTaskTitle(convertReq.Chapters, req.Genre),
 		Genre:          req.Genre,
 		Tone:           req.Tone,
 		Pacing:         req.Pacing,
@@ -80,7 +81,6 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) 
 		)...,
 	)
 
-	convertReq := l.buildConvertRequest(req)
 	if err := l.svc.ConvertRunner.Enqueue(service.AsyncConvertJob{
 		Task:    scriptTask,
 		Request: convertReq,

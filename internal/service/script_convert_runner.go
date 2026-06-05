@@ -174,10 +174,14 @@ func (r *AsyncScriptConvertRunner) persistSuccess(ctx context.Context, task *mod
 			return err
 		}
 
+		task.Title = ResolveFinalTaskTitle(task.Title, result.ScriptTitle)
 		task.Status = "succeeded"
 		task.ErrMsg = ""
+		// Reuse the task row already held in memory and update it in the same
+		// transaction, which avoids any extra read-before-write query.
 		logn.Debug("script convert result persisted",
 			TaskLogFields(ctx, ScriptTaskStagePersisting,
+				zap.String("task_title", task.Title),
 				zap.Int("chapters", len(req.Chapters)),
 				zap.Int("yaml_len", len(result.YAML)),
 			)...,

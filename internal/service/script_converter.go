@@ -49,6 +49,7 @@ type ChapterInput struct {
 // ConvertResult - Normalized conversion output returned to logic layer.
 type ConvertResult struct {
 	YAML              string
+	ScriptTitle       string
 	Summary           model.ScriptSummary
 	ConsistencyReport model.ConsistencyReport
 	Usage             *einoSchema.TokenUsage
@@ -365,6 +366,7 @@ func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req Convert
 
 	return &ConvertResult{
 		YAML:              string(normalizedYAML),
+		ScriptTitle:       strings.TrimSpace(scriptYAML.Metadata.Title),
 		Summary:           sc.generateSummary(scriptYAML),
 		ConsistencyReport: scriptYAML.ConsistencyReport,
 	}, nil
