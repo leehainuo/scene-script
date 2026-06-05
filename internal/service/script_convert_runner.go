@@ -19,12 +19,12 @@ type AsyncConvertJob struct {
 }
 
 type AsyncScriptConvertRunner struct {
-	db         sqlx.SqlConn
-	converter  *ScriptConverter
-	taskModel  model.ScriptTaskModel
+	db          sqlx.SqlConn
+	converter   *ScriptConverter
+	taskModel   model.ScriptTaskModel
 	eventBroker *ScriptTaskEventBroker
-	jobs       chan AsyncConvertJob
-	workers    int
+	jobs        chan AsyncConvertJob
+	workers     int
 }
 
 func NewAsyncScriptConvertRunner(
@@ -46,8 +46,16 @@ func NewAsyncScriptConvertRunner(
 }
 
 func (r *AsyncScriptConvertRunner) Enqueue(job AsyncConvertJob) error {
+	logCtx := WithTaskLogContext(context.Background(), job.Task.TaskID, time.Now())
 	select {
 	case r.jobs <- job:
+		logn.Debug("script convert job queued",
+			TaskLogFields(logCtx, ScriptTaskStageQueued,
+				zap.Int("queue_capacity", cap(r.jobs)),
+				zap.Int("queue_length", len(r.jobs)),
+				zap.Int("chapters", len(job.Request.Chapters)),
+			)...,
+		)
 		r.eventBroker.Publish(NewScriptTaskEvent(
 			job.Task.TaskID,
 			job.Task.Status,
@@ -74,41 +82,56 @@ func (r *AsyncScriptConvertRunner) worker(workerID int) {
 }
 
 func (r *AsyncScriptConvertRunner) runJob(workerID int, job AsyncConvertJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), r.jobTimeout())
+	startedAt := time.Now()
+	baseCtx := WithTaskLogContext(context.Background(), job.Task.TaskID, startedAt)
+	ctx, cancel := context.WithTimeout(baseCtx, r.jobTimeout())
 	defer cancel()
 
 	logger := logn.WithContext(ctx)
 	task := *job.Task
 
-	logger.Info("async script convert started", zap.Int("worker_id", workerID), zap.String("task_id", task.TaskID))
+	logger.Info("async script convert started", TaskLogFields(ctx, ScriptTaskStageStarting, zap.Int("worker_id", workerID))...)
 	r.eventBroker.Publish(NewScriptTaskEvent(task.TaskID, "running", ScriptTaskStageStarting, "后台任务已启动。", ""))
 
 	task.Status = "running"
 	task.ErrMsg = ""
 	if err := r.taskModel.Update(ctx, &task); err != nil {
-		logger.Error("failed to mark task running", zap.String("task_id", task.TaskID), zap.Error(err))
+		logger.Error("failed to mark task running", TaskLogFields(ctx, "mark_running_failed", zap.Error(err))...)
 		r.failTask(ctx, &task, fmt.Errorf("failed to mark task running: %w", err))
 		return
 	}
 
 	result, err := r.converter.ConvertWithProgress(ctx, job.Request, func(progress ConvertProgress) {
+		logger.Debug("script convert progress",
+			TaskLogFields(ctx, progress.Stage,
+				zap.String("message", progress.Message),
+			)...,
+		)
 		r.eventBroker.Publish(NewScriptTaskEvent(task.TaskID, "running", progress.Stage, progress.Message, ""))
 	})
 	if err != nil {
-		logger.Error("async script convert failed", zap.String("task_id", task.TaskID), zap.Error(err))
+		logger.Error("async script convert failed", TaskLogFields(ctx, ScriptTaskStageFailed, zap.Error(err))...)
 		r.failTask(ctx, &task, err)
 		return
 	}
 
 	r.eventBroker.Publish(NewScriptTaskEvent(task.TaskID, "running", ScriptTaskStagePersisting, "结构校验通过，正在写入结果。", ""))
 	if err := r.persistSuccess(ctx, &task, job.Request, result); err != nil {
-		logger.Error("failed to persist async script result", zap.String("task_id", task.TaskID), zap.Error(err))
+		logger.Error("failed to persist async script result", TaskLogFields(ctx, ScriptTaskStagePersisting, zap.Error(err))...)
 		r.failTask(ctx, &task, fmt.Errorf("persist script result: %w", err))
 		return
 	}
 
 	r.eventBroker.Publish(NewScriptTaskEvent(task.TaskID, "succeeded", ScriptTaskStageCompleted, "任务已完成，可以读取剧本详情。", ""))
-	logger.Info("async script convert succeeded", zap.Int("worker_id", workerID), zap.String("task_id", task.TaskID))
+	logger.Info("async script convert succeeded",
+		TaskLogFields(ctx, ScriptTaskStageCompleted,
+			zap.Int("worker_id", workerID),
+			zap.Int("summary_chapters", result.Summary.Chapters),
+			zap.Int("summary_scenes", result.Summary.Scenes),
+			zap.Int("summary_beats", result.Summary.Beats),
+			zap.Int("yaml_len", len(result.YAML)),
+		)...,
+	)
 }
 
 func (r *AsyncScriptConvertRunner) persistSuccess(ctx context.Context, task *model.ScriptTask, req ConvertRequest, result *ConvertResult) error {
@@ -153,6 +176,12 @@ func (r *AsyncScriptConvertRunner) persistSuccess(ctx context.Context, task *mod
 
 		task.Status = "succeeded"
 		task.ErrMsg = ""
+		logn.Debug("script convert result persisted",
+			TaskLogFields(ctx, ScriptTaskStagePersisting,
+				zap.Int("chapters", len(req.Chapters)),
+				zap.Int("yaml_len", len(result.YAML)),
+			)...,
+		)
 		return taskModel.Update(ctx, task)
 	})
 }
@@ -161,7 +190,7 @@ func (r *AsyncScriptConvertRunner) failTask(ctx context.Context, task *model.Scr
 	task.Status = "failed"
 	task.ErrMsg = truncateAsyncErr(err.Error(), 1024)
 	if updateErr := r.taskModel.Update(ctx, task); updateErr != nil {
-		logn.Error("failed to mark async script task failed", zap.String("task_id", task.TaskID), zap.Error(updateErr))
+		logn.Error("failed to mark async script task failed", TaskLogFields(ctx, "mark_failed_update_failed", zap.Error(updateErr))...)
 	}
 
 	r.eventBroker.Publish(NewScriptTaskEvent(task.TaskID, "failed", ScriptTaskStageFailed, "任务执行失败。", task.ErrMsg))

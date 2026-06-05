@@ -136,7 +136,12 @@ func Debug(msg string, fields ...zap.Field) {
 }
 
 func getLogger() *zap.Logger {
-	return logger.Load().(*zap.Logger)
+	if loaded := logger.Load(); loaded != nil {
+		if l, ok := loaded.(*zap.Logger); ok && l != nil {
+			return l
+		}
+	}
+	return zap.NewNop()
 }
 
 // Logger is a logger that can be used with context

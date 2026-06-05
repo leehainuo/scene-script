@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -47,6 +48,16 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) 
 	}
 
 	taskID := service.GenerateTaskID()
+	logCtx := service.WithTaskLogContext(l.c, taskID, time.Now())
+	l.Debug("script convert request accepted",
+		service.TaskLogFields(logCtx, "accepted",
+			zap.Int64("user_id", userID),
+			zap.Int("chapters", len(req.Chapters)),
+			zap.String("genre", req.Genre),
+			zap.String("tone", req.Tone),
+			zap.String("pacing", req.Pacing),
+		)...,
+	)
 	scriptTask := &model.ScriptTask{
 		TaskID:         taskID,
 		UserID:         userID,
@@ -63,16 +74,26 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) 
 		return nil, errorn.New(http.StatusInternalServerError, "failed to create task")
 	}
 	scriptTask.ID = insertID
+	l.Debug("script task created",
+		service.TaskLogFields(logCtx, "task_created",
+			zap.Int64("row_id", insertID),
+		)...,
+	)
 
 	convertReq := l.buildConvertRequest(req)
 	if err := l.svc.ConvertRunner.Enqueue(service.AsyncConvertJob{
 		Task:    scriptTask,
 		Request: convertReq,
 	}); err != nil {
-		l.Error("failed to enqueue script conversion", zap.Error(err), zap.String("task_id", taskID))
+		l.Error("failed to enqueue script conversion", service.TaskLogFields(logCtx, "enqueue_failed", zap.Error(err))...)
 		l.markTaskFailed(scriptTask, err)
 		return nil, errorn.New(http.StatusServiceUnavailable, "conversion queue is busy, please retry")
 	}
+	l.Debug("script convert job enqueued",
+		service.TaskLogFields(logCtx, "queued",
+			zap.Int("chapters", len(convertReq.Chapters)),
+		)...,
+	)
 
 	return &types.ConvertScriptResp{
 		ID:        taskID,

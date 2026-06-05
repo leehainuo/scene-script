@@ -9,8 +9,10 @@ import (
 	einoModel "github.com/cloudwego/eino/components/model"
 	einoSchema "github.com/cloudwego/eino/schema"
 	einoOpenAI "github.com/cloudwego/eino-ext/components/model/openai"
+	"go.uber.org/zap"
 
 	"scene-script/config"
+	"scene-script/pkg/logn"
 )
 
 // LLMResponse - Unified text generation response.
@@ -68,6 +70,14 @@ func NewLLMClient(cfg *config.LLMConf) (*LLMClient, error) {
 
 // GenerateScript - Generate YAML with Eino ChatModel over an OpenAI-compatible endpoint.
 func (c *LLMClient) GenerateScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error) {
+	startedAt := time.Now()
+	logn.Debug("llm generate start",
+		TaskLogFields(ctx, "llm_request",
+			zap.String("model", c.config.API.Model),
+			zap.Int("system_prompt_len", len(systemPrompt)),
+			zap.Int("user_prompt_len", len(userPrompt)),
+		)...,
+	)
 	msgs := []*einoSchema.Message{
 		einoSchema.SystemMessage(systemPrompt),
 		einoSchema.UserMessage(userPrompt),
@@ -86,11 +96,24 @@ func (c *LLMClient) GenerateScript(ctx context.Context, systemPrompt, userPrompt
 
 	resp, err := c.model.Generate(ctx, msgs, opts...)
 	if err != nil {
+		logn.Error("llm generate failed",
+			TaskLogFields(ctx, "llm_failed",
+				zap.String("model", c.config.API.Model),
+				zap.Int64("llm_elapsed_ms", time.Since(startedAt).Milliseconds()),
+				zap.Error(err),
+			)...,
+		)
 		return nil, NewConvertError(ConvertErrorLLM, "llm generation failed", err)
 	}
 
 	content := strings.TrimSpace(resp.Content)
 	if content == "" {
+		logn.Warn("llm returned empty content",
+			TaskLogFields(ctx, "llm_empty",
+				zap.String("model", c.config.API.Model),
+				zap.Int64("llm_elapsed_ms", time.Since(startedAt).Milliseconds()),
+			)...,
+		)
 		return nil, NewConvertError(ConvertErrorLLM, "llm returned empty content", nil)
 	}
 
@@ -98,6 +121,14 @@ func (c *LLMClient) GenerateScript(ctx context.Context, systemPrompt, userPrompt
 	if resp.ResponseMeta != nil {
 		usage = resp.ResponseMeta.Usage
 	}
+	logn.Debug("llm generate done",
+		TaskLogFields(ctx, "llm_done",
+			zap.String("model", c.config.API.Model),
+			zap.Int64("llm_elapsed_ms", time.Since(startedAt).Milliseconds()),
+			zap.Int("content_len", len(content)),
+			zap.Any("usage", usage),
+		)...,
+	)
 
 	return &LLMResponse{
 		Content: content,
