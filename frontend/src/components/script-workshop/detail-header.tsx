@@ -29,7 +29,8 @@ export function ScriptDetailHeader({
     <StudioPanel
       eyebrow="Detail"
       title={title}
-      description="结果详情保持简单干净，只展示最关键的信息。"
+      animateOnMount
+      animationDelayMs={0}
       actions={
         <div className="flex flex-wrap items-center justify-end gap-2">
           {hasUnsavedChanges ? (

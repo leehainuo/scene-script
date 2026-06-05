@@ -59,6 +59,18 @@ type SaveScriptResultReq struct {
 	YAML string `json:"yaml" validate:"required"`
 }
 
+type DeleteScriptReq struct {
+	ID string `json:"id" validate:"required,max=64"`
+}
+
+type DeleteScriptResp struct {
+	ID string `json:"id"`
+}
+
+type RetryScriptReq struct {
+	ID string `json:"id" validate:"required,max=64"`
+}
+
 type ScriptTaskMeta struct {
 	ID             string    `json:"id"`
 	Title          string    `json:"title"`

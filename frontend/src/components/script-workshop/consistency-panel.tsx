@@ -40,6 +40,8 @@ export function ConsistencyPanel({ consistency }: ConsistencyPanelProps) {
       eyebrow="Consistency"
       title="一致性质检详情"
       description="保持和页面主风格一致，不再单独堆很多颜色块。"
+      animateOnMount
+      animationDelayMs={160}
       className="rounded-[30px] border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]"
     >
       <div className="grid gap-4 md:grid-cols-3">

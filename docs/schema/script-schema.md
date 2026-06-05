@@ -12,7 +12,7 @@
 
 ### 2. 一致性保障
 - **角色引用校验**：所有对话、视角、关系描述中的角色名必须在 `dramatis_personae` 中注册，系统自动检测未定义或悬空的引用。
-- **地点引用校验**：所有场景的 `location` 字段必须对应 `settings` 中的地点，确保地理逻辑一致。
+- **地点引用校验（软匹配）**：所有场景的 `location` 会优先尝试与 `settings` 精确匹配；若不命中，系统会执行规范化 + 模糊匹配（包含关系、小差值容忍、bigram Jaccard 相似度阈值）来自动归并到已登记地点，减少“母地点 + 子区域”写法导致的误报。
 
 ### 3. 编剧友好
 - **分镜类型明确**：`beats.type` 分为 `action`（动作）、`dialogue`（对白）、`inner`（内心独白）、`exposition`（叙述/说明），方便后期导演、美术、录音等部门拆解。
@@ -59,6 +59,8 @@ settings:
   - name: "XX公寓"
     description: "位于市中心的高档公寓，三室两厅，现代装修风格"
     importance: "high|medium|low"
+    # 可选扩展字段（后向兼容）：
+    aliases: ["XX小区公寓楼", "公寓"]
   
   - name: "废弃仓库"
     description: "郊外的老工业园区，昏暗潮湿"
@@ -73,7 +75,7 @@ chapters:
       - id: "ch1.sc1"
         title: "场景标题"
         goal: "本场景的核心冲突或推进目标，例：张三发现李四的秘密"
-        location: "XX公寓"  # 必须对应 settings 中的地点名称
+        location: "XX公寓书房"  # 原始地点短语（可包含子区）
         time: "Day|Night|Dawn|Dusk|Autumn|Spring|..."
         pov: "张三"  # 主视角角色名，必须对应 dramatis_personae
         mood: "阴郁|欢快|紧张|温暖|..."
@@ -162,6 +164,7 @@ consistency_report:
 | name | string | ✓ | 地点名称，全剧唯一 |
 | description | string | ✓ | 地点描述，环境、氛围等 |
 | importance | string | ✓ | 重要程度：high/medium/low |
+| aliases | array | ✗ | 可选：地点别名集合（如“城南老宅院落/老宅院落”），用于软匹配与检索 |
 
 ### chapters（章节）
 | 字段 | 类型 | 必需 | 说明 |
@@ -177,7 +180,7 @@ consistency_report:
 | id | string | ✓ | 场景ID，如"ch1.sc1" |
 | title | string | ✓ | 场景标题 |
 | goal | string | ✓ | 场景目标/核心冲突 |
-| location | string | ✓ | 地点名称，必须对应settings |
+| location | string | ✓ | 地点短语，优先与 settings 精确匹配；不命中时进入软匹配流程 |
 | time | string | ✓ | 时间：Day/Night/Dawn/Dusk/季节等 |
 | pov | string | ✓ | 主视角角色，必须对应dramatis_personae |
 | mood | string | ✓ | 场景氛围：阴郁/欢快/紧张等 |
@@ -202,8 +205,18 @@ consistency_report:
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | roles_missing | array | dramatis_personae 中未定义但被引用的角色 |
-| settings_missing | array | settings 中未定义但被引用的地点 |
+| settings_missing | array | settings 中未定义但被引用的地点（已应用软匹配后仍无法归并的项） |
 | dangling_refs | array | 已定义但未使用的角色/地点或未回收的伏笔 |
+
+> 说明：为保持与 v1.0 校验逻辑兼容，`consistency_report` 结构不变。系统内部已启用软匹配（规范化、包含关系的小差值容忍、bigram Jaccard 阈值），只有在无法可靠归并时，才会把地点加入 `settings_missing`。
+
+#### 一致性软匹配规则（实现说明）
+- 规范化：小写、去空白与常见标点，移除弱语气助词（如“的/里”）。
+- 匹配级联：
+  1) 精确匹配：与 `settings.name` 或其 `aliases` 完全相同。
+  2) 包含匹配（小差值容忍）：若 A 包含 B 且长度差 ≤ 4（如“城南老宅院落”⊇“城南老宅”），视为同一地点。
+  3) 相似度匹配：按 bigram Jaccard 相似度择优；阈值默认 0.72，低于阈值不自动归并。
+- 置信度：当出现多个候选时，择最高分；若最高分仍低于阈值，保留为缺失项以避免误归。
 
 ## 示例：完整剧本
 
@@ -347,3 +360,4 @@ curl -X POST http://localhost:8000/api/v1/script/convert \
 ## 版本历史
 
 - **v1.0** (2025-06-05)：初版发布，包含完整的剧本结构、人物表、地点表、分镜设计和一致性校验。
+- **v1.0（2026-06-06附注）**：在不改动 version 的前提下，补充 `settings.aliases`（地点别名）并完善一致性“软匹配”策略说明；向后兼容现有解析与校验。

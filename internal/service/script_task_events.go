@@ -8,14 +8,15 @@ import (
 )
 
 const (
-	ScriptTaskStageQueued     = "queued"
-	ScriptTaskStageStarting   = "starting"
-	ScriptTaskStageGenerating = "generating"
-	ScriptTaskStageValidating = "validating"
-	ScriptTaskStageRepairing  = "repairing"
-	ScriptTaskStagePersisting = "persisting"
-	ScriptTaskStageCompleted  = "completed"
-	ScriptTaskStageFailed     = "failed"
+	ScriptTaskStageQueued      = "queued"
+	ScriptTaskStageStarting    = "starting"
+	ScriptTaskStageSummarizing = "summarizing"
+	ScriptTaskStageGenerating  = "generating"
+	ScriptTaskStageValidating  = "validating"
+	ScriptTaskStageRepairing   = "repairing"
+	ScriptTaskStagePersisting  = "persisting"
+	ScriptTaskStageCompleted   = "completed"
+	ScriptTaskStageFailed      = "failed"
 )
 
 type ScriptTaskEvent struct {

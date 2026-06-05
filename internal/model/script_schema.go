@@ -35,9 +35,10 @@ type Character struct {
 
 // Setting - Location/setting definition
 type Setting struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	Importance  string `yaml:"importance"`
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description"`
+	Importance  string   `yaml:"importance"`
+	Aliases     []string `yaml:"aliases,omitempty"`
 }
 
 // Chapter - Chapter structure
