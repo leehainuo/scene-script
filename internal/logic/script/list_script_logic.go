@@ -10,7 +10,7 @@ import (
 	"scene-script/pkg/logn"
 )
 
-// ListScriptLogic - List script tasks (placeholder for future DB query)
+// ListScriptLogic returns the authenticated user's paginated script tasks.
 type ListScriptLogic struct {
 	*logn.Logger
 	c   context.Context

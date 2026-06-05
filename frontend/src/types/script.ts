@@ -64,6 +64,7 @@ export interface ScriptSetting {
   name: string
   description: string
   importance: "high" | "medium" | "low" | string
+  aliases?: string[]
 }
 
 export interface ScriptYamlMetadata {
@@ -111,6 +112,7 @@ export interface ScriptTaskEvent {
   stage:
     | "queued"
     | "starting"
+    | "summarizing"
     | "generating"
     | "validating"
     | "repairing"
@@ -170,4 +172,8 @@ export interface SaveScriptResultRequest {
 
 export interface ScriptListParams extends PaginationParams {
   status?: "all" | "pending" | "running" | "succeeded" | "failed"
+}
+
+export interface DeleteScriptResponse {
+  id: string
 }

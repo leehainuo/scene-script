@@ -62,6 +62,12 @@ type ConvertProgress struct {
 
 type ConvertProgressReporter func(ConvertProgress)
 
+const (
+	longFormTotalCharsThreshold    = 12000
+	longFormSingleChapterThreshold = 4500
+	longFormSummaryTargetChars     = 900
+)
+
 // NewScriptConverter - Create a new script converter.
 func NewScriptConverter(cfg *config.LLMConf, llm LLMProvider) (*ScriptConverter, error) {
 	if llm == nil {
@@ -98,8 +104,28 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 			zap.String("pacing", req.Pacing),
 		)...,
 	)
+	workingReq := req
+	preprocessUsage := (*einoSchema.TokenUsage)(nil)
+	if sc.shouldUseLongFormMode(req) {
+		sc.reportProgress(report, ScriptTaskStageSummarizing, "原文篇幅较长，正在逐章提炼摘要后再生成剧本。")
+		compressedReq, usage, err := sc.compressLongFormRequest(ctx, req)
+		if err != nil {
+			logn.Error("script converter long form summarizing failed", TaskLogFields(ctx, ScriptTaskStageSummarizing, zap.Error(err))...)
+			return nil, err
+		}
+		workingReq = compressedReq
+		preprocessUsage = usage
+		logn.Debug("script converter long form summarized",
+			TaskLogFields(ctx, ScriptTaskStageSummarizing,
+				zap.Int("chapters", len(req.Chapters)),
+				zap.Int("total_chars_before", totalChapterChars(req.Chapters)),
+				zap.Int("total_chars_after", totalChapterChars(workingReq.Chapters)),
+			)...,
+		)
+	}
+
 	sc.reportProgress(report, ScriptTaskStageGenerating, "正在调用大模型生成剧本 YAML。")
-	systemPrompt, userPrompt := sc.promptManager.ConvertPrompt(req)
+	systemPrompt, userPrompt := sc.promptManager.ConvertPrompt(workingReq)
 	llmResp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		logn.Error("script converter initial generation failed", TaskLogFields(ctx, ScriptTaskStageGenerating, zap.Error(err))...)
@@ -112,9 +138,9 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 	)
 
 	sc.reportProgress(report, ScriptTaskStageValidating, "首轮生成完成，正在做 YAML 与 schema 校验。")
-	result, convErr := sc.normalizeAndValidate(ctx, req, llmResp.Content)
+	result, convErr := sc.normalizeAndValidate(ctx, workingReq, llmResp.Content)
 	if convErr == nil {
-		result.Usage = llmResp.Usage
+		result.Usage = mergeTokenUsage(preprocessUsage, llmResp.Usage)
 		logn.Debug("script converter validated on first pass",
 			TaskLogFields(ctx, ScriptTaskStageValidating,
 				zap.Int("yaml_len", len(result.YAML)),
@@ -144,7 +170,7 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 			)...,
 		)
 		sc.reportProgress(report, ScriptTaskStageRepairing, fmt.Sprintf("首轮结果未通过校验，正在执行第 %d 次修复。", attempt))
-		repairSystem, repairPrompt := sc.promptManager.RepairPrompt(req, lastOutput, lastErr, attempt)
+		repairSystem, repairPrompt := sc.promptManager.RepairPrompt(workingReq, lastOutput, lastErr, attempt)
 		repairResp, repairErr := sc.llm.GenerateScript(ctx, repairSystem, repairPrompt)
 		if repairErr != nil {
 			logn.Error("script converter repair generation failed",
@@ -157,9 +183,9 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 		}
 
 		sc.reportProgress(report, ScriptTaskStageValidating, fmt.Sprintf("第 %d 次修复完成，正在重新校验结果。", attempt))
-		result, convErr = sc.normalizeAndValidate(ctx, req, repairResp.Content)
+		result, convErr = sc.normalizeAndValidate(ctx, workingReq, repairResp.Content)
 		if convErr == nil {
-			result.Usage = mergeTokenUsage(llmResp.Usage, repairResp.Usage)
+			result.Usage = mergeTokenUsage(preprocessUsage, llmResp.Usage, repairResp.Usage)
 			logn.Debug("script converter repair succeeded",
 				TaskLogFields(ctx, ScriptTaskStageRepairing,
 					zap.Int("attempt", attempt),
@@ -194,6 +220,76 @@ func (sc *ScriptConverter) reportProgress(report ConvertProgressReporter, stage,
 		Stage:   stage,
 		Message: message,
 	})
+}
+
+func (sc *ScriptConverter) shouldUseLongFormMode(req ConvertRequest) bool {
+	if totalChapterChars(req.Chapters) >= longFormTotalCharsThreshold {
+		return true
+	}
+	for _, chapter := range req.Chapters {
+		if len([]rune(strings.TrimSpace(chapter.Text))) >= longFormSingleChapterThreshold {
+			return true
+		}
+	}
+	return false
+}
+
+func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req ConvertRequest) (ConvertRequest, *einoSchema.TokenUsage, error) {
+	compressed := ConvertRequest{
+		Chapters: make([]ChapterInput, len(req.Chapters)),
+		Genre:    req.Genre,
+		Tone:     req.Tone,
+		Pacing:   req.Pacing,
+	}
+
+	usages := make([]*einoSchema.TokenUsage, 0, len(req.Chapters))
+	for index, chapter := range req.Chapters {
+		systemPrompt, userPrompt := sc.promptManager.ChapterSummaryPrompt(req, chapter, index, longFormSummaryTargetChars)
+		resp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
+		if err != nil {
+			return ConvertRequest{}, nil, err
+		}
+
+		compressed.Chapters[index] = ChapterInput{
+			Title: chapter.Title,
+			Text:  normalizeChapterSummary(chapter.Title, resp.Content),
+		}
+		usages = append(usages, resp.Usage)
+	}
+
+	return compressed, mergeTokenUsage(usages...), nil
+}
+
+func normalizeChapterSummary(title, raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return fmt.Sprintf("章节标题：%s\n该章节摘要为空，请回退到原文重新生成。", strings.TrimSpace(title))
+	}
+
+	lines := strings.Split(text, "\n")
+	normalized := make([]string, 0, len(lines)+1)
+	header := fmt.Sprintf("章节标题：%s", strings.TrimSpace(title))
+	if len(lines) == 0 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "章节标题：") {
+		normalized = append(normalized, header)
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		normalized = append(normalized, trimmed)
+	}
+
+	return strings.Join(normalized, "\n")
+}
+
+func totalChapterChars(chapters []ChapterInput) int {
+	total := 0
+	for _, chapter := range chapters {
+		total += len([]rune(strings.TrimSpace(chapter.Text)))
+	}
+	return total
 }
 
 // NormalizeEditedYAML validates and normalizes user-edited YAML against the
@@ -557,8 +653,25 @@ func (sc *ScriptConverter) validateConsistency(script *model.ScriptYAML) model.C
 	}
 
 	definedSettings := make(map[string]struct{}, len(script.Settings))
+	settingCandidates := make([]settingCandidate, 0, len(script.Settings))
 	for _, setting := range script.Settings {
 		definedSettings[setting.Name] = struct{}{}
+		if strings.TrimSpace(setting.Name) != "" {
+			settingCandidates = append(settingCandidates, settingCandidate{
+				Canonical: setting.Name,
+				Candidate: setting.Name,
+			})
+		}
+		for _, alias := range setting.Aliases {
+			alias = strings.TrimSpace(alias)
+			if alias == "" {
+				continue
+			}
+			settingCandidates = append(settingCandidates, settingCandidate{
+				Canonical: setting.Name,
+				Candidate: alias,
+			})
+		}
 	}
 
 	usedRoles := make(map[string]struct{})
@@ -570,10 +683,12 @@ func (sc *ScriptConverter) validateConsistency(script *model.ScriptYAML) model.C
 	for _, chapter := range script.Chapters {
 		for _, scene := range chapter.Scenes {
 			if scene.Location != "" {
-				if _, ok := definedSettings[scene.Location]; !ok {
-					settingsMissing[scene.Location] = struct{}{}
-				} else {
+				if _, ok := definedSettings[scene.Location]; ok {
 					usedSettings[scene.Location] = struct{}{}
+				} else if match, ok := softMatchSetting(scene.Location, settingCandidates); ok {
+					usedSettings[match] = struct{}{}
+				} else {
+					settingsMissing[scene.Location] = struct{}{}
 				}
 			}
 
@@ -618,6 +733,156 @@ func (sc *ScriptConverter) validateConsistency(script *model.ScriptYAML) model.C
 		SettingsMissing: sortedKeys(settingsMissing),
 		DanglingRefs:    sortedKeys(danglingRefs),
 	}
+}
+
+type settingCandidate struct {
+	Canonical string
+	Candidate string
+}
+
+func softMatchSetting(loc string, defined []settingCandidate) (string, bool) {
+	locN := normalizeLocationName(loc)
+	locT := trimGenericSuffixes(locN)
+	best := ""
+	bestScore := 0.0
+	bestLen := 0
+	for _, item := range defined {
+		name := item.Candidate
+		nameN := normalizeLocationName(name)
+		nameT := trimGenericSuffixes(nameN)
+
+		// 1) 直接等价（含经裁剪后的等价）
+		if nameN == locN || nameT == locT || nameN == locT || nameT == locN {
+			return item.Canonical, true
+		}
+
+		// 2) 包含匹配 + 长度差小（原始与裁剪后均尝试）
+		if strings.Contains(locN, nameN) || strings.Contains(locT, nameN) || strings.Contains(locN, nameT) || strings.Contains(locT, nameT) {
+			lr := runeLen(nameN)
+			rr := runeLen(locN)
+			if rr > 0 && (rr-lr) <= 4 {
+				return item.Canonical, true
+			}
+			score := float64(runeLen(nameT)) / float64(maxInt(runeLen(nameT), runeLen(locT)))
+			if score > bestScore || (score == bestScore && runeLen(nameT) > bestLen) {
+				best, bestScore, bestLen = item.Canonical, score, runeLen(nameT)
+			}
+			continue
+		}
+		if strings.Contains(nameN, locN) || strings.Contains(nameT, locN) || strings.Contains(nameN, locT) || strings.Contains(nameT, locT) {
+			nl := runeLen(nameN)
+			score := float64(runeLen(locT)) / float64(maxInt(runeLen(locT), runeLen(nameT)))
+			if score > bestScore || (score == bestScore && nl > bestLen) {
+				best, bestScore, bestLen = item.Canonical, score, nl
+			}
+			continue
+		}
+
+		// 3) 相似度兜底（对裁剪后的字符串计算）
+		s := jaccardBigrams(locT, nameT)
+		if s > bestScore || (s == bestScore && runeLen(nameT) > bestLen) {
+			best, bestScore, bestLen = item.Canonical, s, runeLen(nameT)
+		}
+	}
+	if bestScore >= 0.72 {
+		return best, true
+	}
+	return "", false
+}
+
+func normalizeLocationName(s string) string {
+	x := strings.TrimSpace(strings.ToLower(s))
+	x = strings.NewReplacer(
+		" ", "",
+		"\u3000", "",
+		"·", "",
+		"-", "",
+		"_", "",
+		"，", "",
+		",", "",
+		"。", "",
+		".", "",
+		"：", "",
+		":", "",
+		"；", "",
+		";", "",
+		"！", "",
+		"!", "",
+		"？", "",
+		"?", "",
+		"、", "",
+		"（", "",
+		"）", "",
+		"(", "",
+		")", "",
+		"“", "",
+		"”", "",
+		"\"", "",
+		"《", "",
+		"》", "",
+	).Replace(x)
+	x = strings.ReplaceAll(x, "的", "")
+	x = strings.ReplaceAll(x, "里", "")
+	return x
+}
+
+// trimGenericSuffixes removes common area-like suffixes to obtain a more canonical stem
+// for matching, e.g. "城南老宅院落" -> "城南老宅"，"旧车站遗址墙角" -> "旧车站遗址"。
+func trimGenericSuffixes(s string) string {
+	suffixes := []string{
+		"院落", "书房", "墙角", "走廊", "庭院", "院子", "房间", "大厅", "天台", "屋顶",
+		"门口", "后院", "前厅", "长廊", "街道", "小街", "小巷", "胡同", "站台", "角落",
+	}
+	for _, suf := range suffixes {
+		if strings.HasSuffix(s, suf) && runeLen(s) > runeLen(suf)+1 {
+			return strings.TrimSuffix(s, suf)
+		}
+	}
+	return s
+}
+
+func jaccardBigrams(a, b string) float64 {
+	A := bigrams(a)
+	B := bigrams(b)
+	if len(A) == 0 && len(B) == 0 {
+		return 1
+	}
+	inter := 0
+	for k := range A {
+		if _, ok := B[k]; ok {
+			inter++
+		}
+	}
+	union := len(A) + len(B) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
+
+func bigrams(s string) map[string]struct{} {
+	r := []rune(s)
+	m := make(map[string]struct{})
+	if len(r) == 0 {
+		return m
+	}
+	if len(r) == 1 {
+		m[string(r)] = struct{}{}
+		return m
+	}
+	for i := 0; i < len(r)-1; i++ {
+		m[string(r[i:i+2])] = struct{}{}
+	}
+	return m
+}
+
+func runeLen(s string) int { return len([]rune(s)) }
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (sc *ScriptConverter) findDanglingStoryClues(script *model.ScriptYAML) []string {

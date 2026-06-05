@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import {
   ArrowRight,
@@ -13,11 +13,13 @@ import { useAuthStore } from "@/stores"
 import { logout } from "@/services"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
 import { consumeSidebarEntranceAnimation } from "@/lib/sidebar-animation"
+import { cn } from "@/lib/utils"
 
-const HERO_FEATURES = [
-  "YAML 剧本初稿",
-  "异步生成",
-  "继续打磨",
+const TYPING_LINES = [
+  "Novel in，Script out。",
+  "从原文抵达剧本，让故事有结构可打磨。",
+  "章节、场景、节拍，语义化编辑与联动。",
+  "结构化 YAML，结果可复制、可下载、可复用。",
 ]
 
 const MARQUEE_ROWS = [
@@ -61,6 +63,14 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { user, isAuthenticated, logout: clearAuth } = useAuthStore()
+  const [animateIn, setAnimateIn] = useState(false)
+  const [typedText, setTypedText] = useState("")
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [lineIndex, setLineIndex] = useState(0)
+  const longestLine = useMemo(
+    () => TYPING_LINES.reduce((a, b) => (b.length > a.length ? b : a), ""),
+    []
+  )
 
   const isLoginOpen = searchParams.get("login") === "1"
   const redirectAfterLogin = searchParams.get("redirect")
@@ -133,6 +143,45 @@ export default function DashboardPage() {
     void handleLogout()
   }
 
+  useEffect(() => {
+    const t = setTimeout(() => setAnimateIn(true), 20)
+    return () => clearTimeout(t)
+  }, [])
+
+  useEffect(() => {
+    const current = TYPING_LINES[lineIndex]
+    let timeout = 0 as unknown as number
+    const typingBase = 58
+    const deletingBase = 40
+    const typeJitter = 18
+    const deleteJitter = 12
+    const pauseEnd = 1200
+    const pauseStart = 420
+
+    if (!isDeleting) {
+      if (typedText.length < current.length) {
+        timeout = window.setTimeout(() => {
+          setTypedText(current.slice(0, typedText.length + 1))
+        }, typingBase + Math.floor(Math.random() * typeJitter))
+      } else {
+        timeout = window.setTimeout(() => setIsDeleting(true), pauseEnd)
+      }
+    } else {
+      if (typedText.length > 0) {
+        timeout = window.setTimeout(() => {
+          setTypedText(current.slice(0, typedText.length - 1))
+        }, deletingBase + Math.floor(Math.random() * deleteJitter))
+      } else {
+        timeout = window.setTimeout(() => {
+          setIsDeleting(false)
+          setLineIndex((i) => (i + 1) % TYPING_LINES.length)
+        }, pauseStart)
+      }
+    }
+
+    return () => clearTimeout(timeout)
+  }, [typedText, isDeleting, lineIndex])
+
   return (
     <div className="min-h-screen bg-[#f6f6f7] text-slate-900">
       <LoginCardDialog
@@ -184,15 +233,44 @@ export default function DashboardPage() {
                 <p className="text-[11px] font-medium uppercase tracking-[0.42em] text-slate-400">
                   AI Novel To Script
                 </p>
-                <h1 className="mt-4 text-5xl font-semibold tracking-tighter text-slate-950 sm:text-7xl">
+                <h1
+                  className={cn(
+                    "mt-4 text-5xl font-semibold tracking-tighter text-slate-950 sm:text-7xl transition-all duration-700 ease-out",
+                    animateIn ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
+                  )}
+                  style={{ willChange: "transform, opacity" }}
+                >
                   Scene Script
                 </h1>
-                <p className="mx-auto mt-5 max-w-3xl text-sm leading-7 text-slate-500 sm:text-base sm:leading-8">
+                <p
+                  className={cn(
+                    "mx-auto mt-5 max-w-3xl text-sm leading-7 text-slate-500 sm:text-base sm:leading-8 transition-all duration-700 ease-out",
+                    animateIn ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+                  )}
+                  style={{ willChange: "transform, opacity", transitionDelay: animateIn ? "80ms" : undefined }}
+                >
                   把小说章节推成可继续打磨的结构化剧本初稿，让生成、浏览、回看和编辑都留在同一条创作链路里。
                 </p>
               </div>
 
-              <div className="relative overflow-hidden rounded-[40px] bg-[#f6f6f7]/72 shadow-[0_24px_70px_rgba(15,23,42,0.05)] backdrop-blur-[2px]">
+              <div
+                className={cn(
+                  "relative overflow-hidden transition-all duration-700 ease-out",
+                  animateIn ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
+                )}
+                style={{
+                  willChange: "transform, opacity",
+                  transitionDelay: animateIn ? "140ms" : undefined,
+                  WebkitMaskImage:
+                    "linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(0,0,0,1) 14%, rgba(0,0,0,1) 86%, rgba(0,0,0,0) 100%)",
+                  WebkitMaskRepeat: "no-repeat",
+                  WebkitMaskSize: "100% 100%",
+                  maskImage:
+                    "linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(0,0,0,1) 14%, rgba(0,0,0,1) 86%, rgba(0,0,0,0) 100%)",
+                  maskRepeat: "no-repeat",
+                  maskSize: "100% 100%",
+                }}
+              >
                 <div
                   className="absolute inset-0 opacity-90"
                   style={{
@@ -201,20 +279,22 @@ export default function DashboardPage() {
                     backgroundSize: "42px 42px",
                   }}
                 />
-                <div
-                  className="absolute inset-0"
-                  style={{
-                    background:
-                      "radial-gradient(circle at center, rgba(246,246,247,0) 32%, rgba(246,246,247,0.46) 70%, rgba(246,246,247,0.92) 100%)",
-                  }}
-                />
-                <div className="absolute inset-0" style={{ boxShadow: "inset 0 0 120px rgba(246,246,247,0.72)" }} />
-                <div className="absolute inset-y-0 left-0 w-36 bg-linear-to-r from-[#f6f6f7] via-[#f6f6f7]/88 to-transparent" />
-                <div className="absolute inset-y-0 right-0 w-36 bg-linear-to-l from-[#f6f6f7] via-[#f6f6f7]/88 to-transparent" />
-                <div className="absolute inset-x-0 top-0 h-32 bg-linear-to-b from-[#f6f6f7] via-[#f6f6f7]/82 to-transparent" />
-                <div className="absolute inset-x-0 bottom-0 h-32 bg-linear-to-t from-[#f6f6f7] via-[#f6f6f7]/82 to-transparent" />
+                <div className="absolute inset-x-0 top-0 z-0 h-24 bg-linear-to-b from-[#f6f6f7] via-[#f6f6f7]/80 to-transparent" />
+                <div className="absolute inset-x-0 bottom-0 z-0 h-24 bg-linear-to-t from-[#f6f6f7] via-[#f6f6f7]/80 to-transparent" />
 
-                <div className="pointer-events-none absolute inset-x-[-12%] inset-y-0">
+                <div
+                  className="pointer-events-none absolute inset-x-0 inset-y-0 z-10"
+                  style={{
+                    WebkitMaskImage:
+                      "linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(0,0,0,1) 18%, rgba(0,0,0,1) 82%, rgba(0,0,0,0) 100%)",
+                    WebkitMaskRepeat: "no-repeat",
+                    WebkitMaskSize: "100% 100%",
+                    maskImage:
+                      "linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(0,0,0,1) 18%, rgba(0,0,0,1) 82%, rgba(0,0,0,0) 100%)",
+                    maskRepeat: "no-repeat",
+                    maskSize: "100% 100%",
+                  }}
+                >
                   {MARQUEE_ROWS.map((row, index) => (
                     <div
                       key={`row-${index}`}
@@ -247,40 +327,31 @@ export default function DashboardPage() {
                   ))}
                 </div>
 
-                <div className="relative z-10 flex min-h-[720px] items-center justify-center px-6 py-16 sm:px-10">
+                <div className="pointer-events-none absolute inset-y-0 left-0 z-20 w-40 bg-linear-to-r from-[#f6f6f7] to-transparent" />
+                <div className="pointer-events-none absolute inset-y-0 right-0 z-20 w-40 bg-linear-to-l from-[#f6f6f7] to-transparent" />
+
+                <div className="relative z-10 -mt-6 flex min-h-[640px] items-center justify-center px-6 py-12 sm:-mt-12 sm:px-10">
                   <div className="max-w-3xl rounded-[32px] border border-white/80 bg-white/72 px-6 py-8 text-center shadow-[0_24px_60px_rgba(15,23,42,0.08)] backdrop-blur-md sm:px-10 sm:py-10">
-                    <h2 className="text-2xl font-semibold leading-tight text-slate-950 sm:text-4xl">
-                      3 章以上小说，快速转成可编辑剧本初稿。
+                    <h2
+                      className={cn(
+                        "mx-auto max-w-3xl text-center text-xl font-semibold leading-tight tracking-tight text-slate-950 sm:text-xl transition-all duration-700 ease-out",
+                        animateIn ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
+                      )}
+                      style={{ willChange: "transform, opacity", transitionDelay: animateIn ? "100ms" : undefined }}
+                    >
+                      <span className="relative inline-block align-middle">
+                        <span aria-hidden className="invisible block whitespace-pre">{longestLine}</span>
+                        <span className="absolute inset-0 w-full text-center">{typedText}</span>
+                      </span>
                     </h2>
-                    <p className="mx-auto mt-4 max-w-2xl text-sm leading-7 text-slate-500 sm:text-base sm:leading-8">
-                      异步生成、作品墙回看和详情编辑都留在同一条创作链路里，让结果真正可用。
-                    </p>
 
-                    <div className="mt-5 flex flex-wrap justify-center gap-2">
-                      {HERO_FEATURES.map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-full border border-black/8 bg-white/85 px-3 py-1.5 text-sm text-slate-600"
-                        >
-                          {item}
-                        </span>
-                      ))}
-                    </div>
-
-                    <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+                    <div className="mt-7 flex items-center justify-center">
                       <Button
                         onClick={() => handleProtectedNavigate("/script-workshop?view=workspace")}
                         className="h-11 rounded-2xl bg-slate-900 px-6 text-white hover:bg-slate-800"
                       >
-                        {isAuthenticated ? "进入工作台" : "登录后开始"}
+                        即可前往
                         <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        onClick={() => handleProtectedNavigate("/script-workshop?view=history")}
-                        className="h-11 rounded-2xl px-4 text-slate-500 hover:bg-white/60 hover:text-slate-950"
-                      >
-                        查看作品墙
                       </Button>
                     </div>
                   </div>
@@ -299,6 +370,12 @@ export default function DashboardPage() {
             transform: translate3d(-50%, 0, 0);
           }
         }
+
+        @keyframes type-caret-blink {
+          0%, 49% { opacity: 1; }
+          50%, 100% { opacity: 0; }
+        }
+        .type-caret { animation: type-caret-blink 1s steps(1, start) infinite; }
       `}</style>
     </div>
   )

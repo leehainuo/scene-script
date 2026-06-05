@@ -1,11 +1,10 @@
-import { Suspense } from "react"
+import { Suspense, lazy } from "react"
 import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom"
 import { AuthGuard } from "./AuthGuard"
 
-// Lazy load pages
-import Dashboard from "@/pages/dashboard"
-import ScriptWorkshop from "@/pages/script-workshop"
-import NotFound from "@/pages/404"
+const Dashboard = lazy(() => import("@/pages/dashboard"))
+const ScriptWorkshop = lazy(() => import("@/pages/script-workshop"))
+const NotFound = lazy(() => import("@/pages/404"))
 
 // Loading component
 function PageLoading() {

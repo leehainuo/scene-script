@@ -29,6 +29,8 @@ type ScriptChapterModel interface {
 	scriptChapterModel
 	// BEGIN: customizable methods (preserved during code regeneration)
 	InsertBatch(ctx context.Context, rows []*ScriptChapter) error
+	ListByTaskID(ctx context.Context, taskID string) ([]*ScriptChapter, error)
+	DeleteByTaskID(ctx context.Context, taskID string) error
 	// END: customizable methods
 }
 
@@ -125,6 +127,28 @@ func (m *defaultScriptChapterModel) InsertBatch(ctx context.Context, rows []*Scr
 	)
 
 	_, err := m.conn.ExecCtx(ctx, query, args...)
+	return err
+}
+
+func (m *defaultScriptChapterModel) ListByTaskID(ctx context.Context, taskID string) ([]*ScriptChapter, error) {
+	query := `SELECT ` + scriptChapterFieldNames + ` FROM ` + m.table + ` WHERE task_id = ? ORDER BY chapter_index ASC`
+
+	var data []*ScriptChapter
+	err := m.conn.QueryRowsCtx(ctx, &data, query, taskID)
+	switch err {
+	case nil:
+		return data, nil
+	case sql.ErrNoRows:
+		return []*ScriptChapter{}, nil
+	default:
+		return nil, err
+	}
+}
+
+func (m *defaultScriptChapterModel) DeleteByTaskID(ctx context.Context, taskID string) error {
+	query := `DELETE FROM ` + m.table + ` WHERE task_id = ?`
+
+	_, err := m.conn.ExecCtx(ctx, query, taskID)
 	return err
 }
 

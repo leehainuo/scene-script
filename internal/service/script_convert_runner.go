@@ -137,23 +137,7 @@ func (r *AsyncScriptConvertRunner) runJob(workerID int, job AsyncConvertJob) {
 func (r *AsyncScriptConvertRunner) persistSuccess(ctx context.Context, task *model.ScriptTask, req ConvertRequest, result *ConvertResult) error {
 	return r.db.TransactCtx(ctx, func(ctx context.Context, conn sqlx.SqlConn) error {
 		taskModel := model.NewScriptTaskModel(conn)
-		chapterModel := model.NewScriptChapterModel(conn)
 		resultModel := model.NewScriptResultModel(conn)
-
-		chapterRows := make([]*model.ScriptChapter, 0, len(req.Chapters))
-		for i, chapter := range req.Chapters {
-			chapterRows = append(chapterRows, &model.ScriptChapter{
-				TaskID:       task.TaskID,
-				ChapterIndex: i + 1,
-				ChapterTitle: chapter.Title,
-				ChapterText:  chapter.Text,
-			})
-		}
-
-		// Batch chapter persistence keeps writes bounded to one transaction and avoids per-chapter follow-up queries.
-		if err := chapterModel.InsertBatch(ctx, chapterRows); err != nil {
-			return err
-		}
 
 		summaryJSON, err := json.Marshal(result.Summary)
 		if err != nil {
