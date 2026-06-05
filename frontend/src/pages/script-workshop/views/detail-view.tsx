@@ -1172,6 +1172,24 @@ export function DetailView({
                         </div>
 
                         <div className="space-y-2">
+                          <Label className="text-slate-600">地点别名（可选）</Label>
+                          <Input
+                            value={(selectedSetting.aliases ?? []).join("，")}
+                            onChange={(event) =>
+                              updateScriptSetting(activeRegistryIndex, (item) => ({
+                                ...item,
+                                aliases: event.target.value
+                                  .split(/[,，]/)
+                                  .map((value) => value.trim())
+                                  .filter(Boolean),
+                              }))
+                            }
+                            placeholder="例如：城南老宅院落，老宅院落"
+                            className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
                           <Label className="text-slate-600">地点描述</Label>
                           <textarea
                             value={selectedSetting.description}

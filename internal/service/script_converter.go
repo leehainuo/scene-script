@@ -653,8 +653,25 @@ func (sc *ScriptConverter) validateConsistency(script *model.ScriptYAML) model.C
 	}
 
 	definedSettings := make(map[string]struct{}, len(script.Settings))
+	settingCandidates := make([]settingCandidate, 0, len(script.Settings))
 	for _, setting := range script.Settings {
 		definedSettings[setting.Name] = struct{}{}
+		if strings.TrimSpace(setting.Name) != "" {
+			settingCandidates = append(settingCandidates, settingCandidate{
+				Canonical: setting.Name,
+				Candidate: setting.Name,
+			})
+		}
+		for _, alias := range setting.Aliases {
+			alias = strings.TrimSpace(alias)
+			if alias == "" {
+				continue
+			}
+			settingCandidates = append(settingCandidates, settingCandidate{
+				Canonical: setting.Name,
+				Candidate: alias,
+			})
+		}
 	}
 
 	usedRoles := make(map[string]struct{})
@@ -666,10 +683,12 @@ func (sc *ScriptConverter) validateConsistency(script *model.ScriptYAML) model.C
 	for _, chapter := range script.Chapters {
 		for _, scene := range chapter.Scenes {
 			if scene.Location != "" {
-				if _, ok := definedSettings[scene.Location]; !ok {
-					settingsMissing[scene.Location] = struct{}{}
-				} else {
+				if _, ok := definedSettings[scene.Location]; ok {
 					usedSettings[scene.Location] = struct{}{}
+				} else if match, ok := softMatchSetting(scene.Location, settingCandidates); ok {
+					usedSettings[match] = struct{}{}
+				} else {
+					settingsMissing[scene.Location] = struct{}{}
 				}
 			}
 
@@ -714,6 +733,156 @@ func (sc *ScriptConverter) validateConsistency(script *model.ScriptYAML) model.C
 		SettingsMissing: sortedKeys(settingsMissing),
 		DanglingRefs:    sortedKeys(danglingRefs),
 	}
+}
+
+type settingCandidate struct {
+	Canonical string
+	Candidate string
+}
+
+func softMatchSetting(loc string, defined []settingCandidate) (string, bool) {
+	locN := normalizeLocationName(loc)
+	locT := trimGenericSuffixes(locN)
+	best := ""
+	bestScore := 0.0
+	bestLen := 0
+	for _, item := range defined {
+		name := item.Candidate
+		nameN := normalizeLocationName(name)
+		nameT := trimGenericSuffixes(nameN)
+
+		// 1) 直接等价（含经裁剪后的等价）
+		if nameN == locN || nameT == locT || nameN == locT || nameT == locN {
+			return item.Canonical, true
+		}
+
+		// 2) 包含匹配 + 长度差小（原始与裁剪后均尝试）
+		if strings.Contains(locN, nameN) || strings.Contains(locT, nameN) || strings.Contains(locN, nameT) || strings.Contains(locT, nameT) {
+			lr := runeLen(nameN)
+			rr := runeLen(locN)
+			if rr > 0 && (rr-lr) <= 4 {
+				return item.Canonical, true
+			}
+			score := float64(runeLen(nameT)) / float64(maxInt(runeLen(nameT), runeLen(locT)))
+			if score > bestScore || (score == bestScore && runeLen(nameT) > bestLen) {
+				best, bestScore, bestLen = item.Canonical, score, runeLen(nameT)
+			}
+			continue
+		}
+		if strings.Contains(nameN, locN) || strings.Contains(nameT, locN) || strings.Contains(nameN, locT) || strings.Contains(nameT, locT) {
+			nl := runeLen(nameN)
+			score := float64(runeLen(locT)) / float64(maxInt(runeLen(locT), runeLen(nameT)))
+			if score > bestScore || (score == bestScore && nl > bestLen) {
+				best, bestScore, bestLen = item.Canonical, score, nl
+			}
+			continue
+		}
+
+		// 3) 相似度兜底（对裁剪后的字符串计算）
+		s := jaccardBigrams(locT, nameT)
+		if s > bestScore || (s == bestScore && runeLen(nameT) > bestLen) {
+			best, bestScore, bestLen = item.Canonical, s, runeLen(nameT)
+		}
+	}
+	if bestScore >= 0.72 {
+		return best, true
+	}
+	return "", false
+}
+
+func normalizeLocationName(s string) string {
+	x := strings.TrimSpace(strings.ToLower(s))
+	x = strings.NewReplacer(
+		" ", "",
+		"\u3000", "",
+		"·", "",
+		"-", "",
+		"_", "",
+		"，", "",
+		",", "",
+		"。", "",
+		".", "",
+		"：", "",
+		":", "",
+		"；", "",
+		";", "",
+		"！", "",
+		"!", "",
+		"？", "",
+		"?", "",
+		"、", "",
+		"（", "",
+		"）", "",
+		"(", "",
+		")", "",
+		"“", "",
+		"”", "",
+		"\"", "",
+		"《", "",
+		"》", "",
+	).Replace(x)
+	x = strings.ReplaceAll(x, "的", "")
+	x = strings.ReplaceAll(x, "里", "")
+	return x
+}
+
+// trimGenericSuffixes removes common area-like suffixes to obtain a more canonical stem
+// for matching, e.g. "城南老宅院落" -> "城南老宅"，"旧车站遗址墙角" -> "旧车站遗址"。
+func trimGenericSuffixes(s string) string {
+	suffixes := []string{
+		"院落", "书房", "墙角", "走廊", "庭院", "院子", "房间", "大厅", "天台", "屋顶",
+		"门口", "后院", "前厅", "长廊", "街道", "小街", "小巷", "胡同", "站台", "角落",
+	}
+	for _, suf := range suffixes {
+		if strings.HasSuffix(s, suf) && runeLen(s) > runeLen(suf)+1 {
+			return strings.TrimSuffix(s, suf)
+		}
+	}
+	return s
+}
+
+func jaccardBigrams(a, b string) float64 {
+	A := bigrams(a)
+	B := bigrams(b)
+	if len(A) == 0 && len(B) == 0 {
+		return 1
+	}
+	inter := 0
+	for k := range A {
+		if _, ok := B[k]; ok {
+			inter++
+		}
+	}
+	union := len(A) + len(B) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
+
+func bigrams(s string) map[string]struct{} {
+	r := []rune(s)
+	m := make(map[string]struct{})
+	if len(r) == 0 {
+		return m
+	}
+	if len(r) == 1 {
+		m[string(r)] = struct{}{}
+		return m
+	}
+	for i := 0; i < len(r)-1; i++ {
+		m[string(r[i:i+2])] = struct{}{}
+	}
+	return m
+}
+
+func runeLen(s string) int { return len([]rune(s)) }
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (sc *ScriptConverter) findDanglingStoryClues(script *model.ScriptYAML) []string {

@@ -107,6 +107,7 @@ function normalizeSetting(value: unknown): ScriptSetting {
     name: asString(record.name),
     description: asString(record.description),
     importance: asString(record.importance, "medium"),
+    aliases: asStringArray(record.aliases),
   }
 }
 
@@ -140,12 +141,121 @@ export function buildScriptConsistency(document: ScriptYamlDocument) {
   const definedRoles = new Set(
     document.dramatis_personae.map((item) => item.name.trim()).filter(Boolean)
   )
-  const definedSettings = new Set(
-    document.settings.map((item) => item.name.trim()).filter(Boolean)
-  )
+  const definedSettings = new Set(document.settings.map((item) => item.name.trim()).filter(Boolean))
 
   const usedRoles = new Set<string>()
   const usedSettings = new Set<string>()
+  const settingsMissing = new Set<string>()
+
+  function normalizeLocationName(value: string) {
+    let x = value.trim().toLowerCase()
+    x = x.replace(/[\s\u3000·\-_，,。.：:；;！!？?、（）()"“”《》]/g, "")
+    x = x.replaceAll("的", "")
+    x = x.replaceAll("里", "")
+    return x
+  }
+
+  function bigrams(value: string) {
+    const chars = Array.from(value)
+    const set = new Set<string>()
+    if (chars.length === 0) {
+      return set
+    }
+    if (chars.length === 1) {
+      set.add(chars[0]!)
+      return set
+    }
+    for (let index = 0; index < chars.length - 1; index++) {
+      set.add(`${chars[index]}${chars[index + 1]}`)
+    }
+    return set
+  }
+
+  function jaccardBigrams(a: string, b: string) {
+    const A = bigrams(a)
+    const B = bigrams(b)
+    if (A.size === 0 && B.size === 0) {
+      return 1
+    }
+    let inter = 0
+    for (const token of A) {
+      if (B.has(token)) {
+        inter += 1
+      }
+    }
+    const union = A.size + B.size - inter
+    if (union === 0) {
+      return 0
+    }
+    return inter / union
+  }
+
+  function runeLen(value: string) {
+    return Array.from(value).length
+  }
+
+  function softMatchSetting(loc: string) {
+    const locN = normalizeLocationName(loc)
+    const candidates = document.settings.flatMap((setting) => {
+      const canonical = setting.name.trim()
+      if (!canonical) {
+        return []
+      }
+      const entries = [{ canonical, candidate: canonical }]
+      for (const alias of setting.aliases ?? []) {
+        const trimmed = alias.trim()
+        if (trimmed) {
+          entries.push({ canonical, candidate: trimmed })
+        }
+      }
+      return entries
+    })
+
+    let best = ""
+    let bestScore = 0
+    let bestLen = 0
+    for (const item of candidates) {
+      const nameN = normalizeLocationName(item.candidate)
+      if (!nameN) {
+        continue
+      }
+      if (nameN === locN) {
+        return item.canonical
+      }
+      if (locN.includes(nameN)) {
+        const lr = runeLen(nameN)
+        const rr = runeLen(locN)
+        if (rr > 0 && rr - lr <= 4) {
+          return item.canonical
+        }
+        const score = lr / Math.max(lr, rr)
+        if (score > bestScore || (score === bestScore && lr > bestLen)) {
+          best = item.canonical
+          bestScore = score
+          bestLen = lr
+        }
+        continue
+      }
+      if (nameN.includes(locN)) {
+        const ll = runeLen(locN)
+        const nl = runeLen(nameN)
+        const score = ll / Math.max(ll, nl)
+        if (score > bestScore || (score === bestScore && nl > bestLen)) {
+          best = item.canonical
+          bestScore = score
+          bestLen = nl
+        }
+        continue
+      }
+      const score = jaccardBigrams(locN, nameN)
+      if (score > bestScore || (score === bestScore && runeLen(nameN) > bestLen)) {
+        best = item.canonical
+        bestScore = score
+        bestLen = runeLen(nameN)
+      }
+    }
+    return bestScore >= 0.72 ? best : ""
+  }
 
   document.chapters.forEach((chapter) => {
     chapter.scenes.forEach((scene) => {
@@ -156,7 +266,16 @@ export function buildScriptConsistency(document: ScriptYamlDocument) {
         usedRoles.add(pov)
       }
       if (location) {
-        usedSettings.add(location)
+        if (definedSettings.has(location)) {
+          usedSettings.add(location)
+        } else {
+          const match = softMatchSetting(location)
+          if (match) {
+            usedSettings.add(match)
+          } else {
+            settingsMissing.add(location)
+          }
+        }
       }
 
       scene.beats.forEach((beat) => {
@@ -169,9 +288,6 @@ export function buildScriptConsistency(document: ScriptYamlDocument) {
   })
 
   const rolesMissing = [...usedRoles].filter((item) => !definedRoles.has(item)).sort()
-  const settingsMissing = [...usedSettings]
-    .filter((item) => !definedSettings.has(item))
-    .sort()
   const danglingRoles = [...definedRoles]
     .filter((item) => !usedRoles.has(item))
     .map((item) => `角色 '${item}' 已定义但未在任何场景中出现`)
@@ -181,7 +297,7 @@ export function buildScriptConsistency(document: ScriptYamlDocument) {
 
   return {
     roles_missing: rolesMissing,
-    settings_missing: settingsMissing,
+    settings_missing: [...settingsMissing].sort(),
     dangling_refs: [...danglingRoles, ...danglingSettings],
   }
 }

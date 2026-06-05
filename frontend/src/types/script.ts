@@ -64,6 +64,7 @@ export interface ScriptSetting {
   name: string
   description: string
   importance: "high" | "medium" | "low" | string
+  aliases?: string[]
 }
 
 export interface ScriptYamlMetadata {
