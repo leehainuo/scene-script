@@ -11,9 +11,11 @@ import (
 
 	einoSchema "github.com/cloudwego/eino/schema"
 	"github.com/goccy/go-yaml"
+	"go.uber.org/zap"
 
 	"scene-script/config"
 	"scene-script/internal/model"
+	"scene-script/pkg/logn"
 )
 
 var (
@@ -47,10 +49,18 @@ type ChapterInput struct {
 // ConvertResult - Normalized conversion output returned to logic layer.
 type ConvertResult struct {
 	YAML              string
+	ScriptTitle       string
 	Summary           model.ScriptSummary
 	ConsistencyReport model.ConsistencyReport
 	Usage             *einoSchema.TokenUsage
 }
+
+type ConvertProgress struct {
+	Stage   string
+	Message string
+}
+
+type ConvertProgressReporter func(ConvertProgress)
 
 // NewScriptConverter - Create a new script converter.
 func NewScriptConverter(cfg *config.LLMConf, llm LLMProvider) (*ScriptConverter, error) {
@@ -71,21 +81,53 @@ func NewScriptConverter(cfg *config.LLMConf, llm LLMProvider) (*ScriptConverter,
 
 // Convert - Convert novel text into normalized screenplay YAML.
 func (sc *ScriptConverter) Convert(ctx context.Context, req ConvertRequest) (*ConvertResult, error) {
+	return sc.ConvertWithProgress(ctx, req, nil)
+}
+
+// ConvertWithProgress - Convert novel text into normalized screenplay YAML with optional stage reporting.
+func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertRequest, report ConvertProgressReporter) (*ConvertResult, error) {
 	if err := sc.validateRequest(req); err != nil {
 		return nil, err
 	}
 
+	logn.Debug("script converter start",
+		TaskLogFields(ctx, "converter_start",
+			zap.Int("chapters", len(req.Chapters)),
+			zap.String("genre", req.Genre),
+			zap.String("tone", req.Tone),
+			zap.String("pacing", req.Pacing),
+		)...,
+	)
+	sc.reportProgress(report, ScriptTaskStageGenerating, "正在调用大模型生成剧本 YAML。")
 	systemPrompt, userPrompt := sc.promptManager.ConvertPrompt(req)
 	llmResp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
 	if err != nil {
+		logn.Error("script converter initial generation failed", TaskLogFields(ctx, ScriptTaskStageGenerating, zap.Error(err))...)
 		return nil, err
 	}
+	logn.Debug("script converter initial generation done",
+		TaskLogFields(ctx, ScriptTaskStageGenerating,
+			zap.Int("raw_len", len(llmResp.Content)),
+		)...,
+	)
 
-	result, convErr := sc.normalizeAndValidate(req, llmResp.Content)
+	sc.reportProgress(report, ScriptTaskStageValidating, "首轮生成完成，正在做 YAML 与 schema 校验。")
+	result, convErr := sc.normalizeAndValidate(ctx, req, llmResp.Content)
 	if convErr == nil {
 		result.Usage = llmResp.Usage
+		logn.Debug("script converter validated on first pass",
+			TaskLogFields(ctx, ScriptTaskStageValidating,
+				zap.Int("yaml_len", len(result.YAML)),
+				zap.Int("summary_chapters", result.Summary.Chapters),
+				zap.Int("summary_scenes", result.Summary.Scenes),
+				zap.Int("summary_beats", result.Summary.Beats),
+			)...,
+		)
 		return result, nil
 	}
+	logn.Warn("script converter first pass invalid",
+		TaskLogFields(ctx, ScriptTaskStageValidating, zap.Error(convErr))...,
+	)
 
 	if !isRepairableConvertError(convErr) {
 		return nil, convErr
@@ -94,23 +136,64 @@ func (sc *ScriptConverter) Convert(ctx context.Context, req ConvertRequest) (*Co
 	lastErr := convErr
 	lastOutput := llmResp.Content
 	for attempt := 1; attempt <= sc.promptManager.MaxRepairAttempts(); attempt++ {
+		logn.Debug("script converter repair attempt started",
+			TaskLogFields(ctx, ScriptTaskStageRepairing,
+				zap.Int("attempt", attempt),
+				zap.Error(lastErr),
+				zap.Int("raw_len", len(lastOutput)),
+			)...,
+		)
+		sc.reportProgress(report, ScriptTaskStageRepairing, fmt.Sprintf("首轮结果未通过校验，正在执行第 %d 次修复。", attempt))
 		repairSystem, repairPrompt := sc.promptManager.RepairPrompt(req, lastOutput, lastErr, attempt)
 		repairResp, repairErr := sc.llm.GenerateScript(ctx, repairSystem, repairPrompt)
 		if repairErr != nil {
+			logn.Error("script converter repair generation failed",
+				TaskLogFields(ctx, ScriptTaskStageRepairing,
+					zap.Int("attempt", attempt),
+					zap.Error(repairErr),
+				)...,
+			)
 			return nil, repairErr
 		}
 
-		result, convErr = sc.normalizeAndValidate(req, repairResp.Content)
+		sc.reportProgress(report, ScriptTaskStageValidating, fmt.Sprintf("第 %d 次修复完成，正在重新校验结果。", attempt))
+		result, convErr = sc.normalizeAndValidate(ctx, req, repairResp.Content)
 		if convErr == nil {
 			result.Usage = mergeTokenUsage(llmResp.Usage, repairResp.Usage)
+			logn.Debug("script converter repair succeeded",
+				TaskLogFields(ctx, ScriptTaskStageRepairing,
+					zap.Int("attempt", attempt),
+					zap.Int("yaml_len", len(result.YAML)),
+					zap.Int("summary_chapters", result.Summary.Chapters),
+					zap.Int("summary_scenes", result.Summary.Scenes),
+					zap.Int("summary_beats", result.Summary.Beats),
+				)...,
+			)
 			return result, nil
 		}
 
+		logn.Warn("script converter repair attempt invalid",
+			TaskLogFields(ctx, ScriptTaskStageRepairing,
+				zap.Int("attempt", attempt),
+				zap.Error(convErr),
+			)...,
+		)
 		lastErr = convErr
 		lastOutput = repairResp.Content
 	}
 
+	logn.Error("script converter exhausted repair attempts", TaskLogFields(ctx, ScriptTaskStageRepairing, zap.Error(lastErr))...)
 	return nil, lastErr
+}
+
+func (sc *ScriptConverter) reportProgress(report ConvertProgressReporter, stage, message string) {
+	if report == nil {
+		return
+	}
+	report(ConvertProgress{
+		Stage:   stage,
+		Message: message,
+	})
 }
 
 // NormalizeEditedYAML validates and normalizes user-edited YAML against the
@@ -122,7 +205,7 @@ func (sc *ScriptConverter) NormalizeEditedYAML(rawYAML string, genre, tone, paci
 		Tone:     tone,
 		Pacing:   pacing,
 	}
-	return sc.normalizeAndValidate(req, rawYAML)
+	return sc.normalizeAndValidate(context.Background(), req, rawYAML)
 }
 
 func (sc *ScriptConverter) validateRequest(req ConvertRequest) error {
@@ -170,19 +253,108 @@ func sanitizeLLMOutput(raw string) string {
 		trimmed = strings.TrimSpace(trimmed[idx:])
 	}
 
+	trimmed = sanitizeQuotedYAMLText(trimmed)
+
 	return trimmed
 }
 
-func (sc *ScriptConverter) normalizeAndValidate(req ConvertRequest, rawContent string) (*ConvertResult, error) {
+func sanitizeQuotedYAMLText(raw string) string {
+	lines := strings.Split(raw, "\n")
+	output := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.Contains(trimmed, `: "`) {
+			output = append(output, line)
+			continue
+		}
+
+		keyValueIdx := strings.Index(line, `: "`)
+		if keyValueIdx < 0 {
+			output = append(output, line)
+			continue
+		}
+
+		keyPart := line[:keyValueIdx]
+		valuePart := strings.TrimSpace(line[keyValueIdx+2:])
+		if valuePart == "" {
+			output = append(output, line)
+			continue
+		}
+
+		if !shouldConvertQuotedScalar(valuePart) {
+			output = append(output, line)
+			continue
+		}
+
+		unquoted := trimQuotedScalarEdge(valuePart)
+		indent := strings.Repeat(" ", len(keyPart)-len(strings.TrimLeft(keyPart, " "))+2)
+		output = append(output, keyPart+": |-")
+		for _, blockLine := range strings.Split(unquoted, "\n") {
+			output = append(output, indent+blockLine)
+		}
+	}
+	return strings.Join(output, "\n")
+}
+
+func shouldConvertQuotedScalar(value string) bool {
+	if value == "" || value[0] != '"' {
+		return false
+	}
+
+	if hasQuotedScalarTerminator(value) {
+		inner := trimQuotedScalarEdge(value)
+		return strings.Contains(inner, `"`) || strings.Contains(inner, "：") || strings.Contains(inner, "“") || strings.Contains(inner, "”")
+	}
+
+	return true
+}
+
+func hasQuotedScalarTerminator(value string) bool {
+	if value == "" {
+		return false
+	}
+	last := []rune(value)[len([]rune(value))-1]
+	return last == '"' || last == '”' || last == '“'
+}
+
+func trimQuotedScalarEdge(value string) string {
+	trimmed := strings.TrimPrefix(value, `"`)
+	for {
+		runes := []rune(trimmed)
+		if len(runes) == 0 {
+			return trimmed
+		}
+		last := runes[len(runes)-1]
+		if last != '"' && last != '”' && last != '“' {
+			return trimmed
+		}
+		trimmed = string(runes[:len(runes)-1])
+	}
+}
+
+func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req ConvertRequest, rawContent string) (*ConvertResult, error) {
 	sanitized := sanitizeLLMOutput(rawContent)
+	logn.Debug("script yaml sanitize finished",
+		TaskLogFields(ctx, "sanitize",
+			zap.Int("raw_len", len(rawContent)),
+			zap.Int("sanitized_len", len(sanitized)),
+		)...,
+	)
 	scriptYAML := &model.ScriptYAML{}
 	parseErr := yaml.Unmarshal([]byte(sanitized), scriptYAML)
 	if parseErr != nil {
+		logn.Debug("script yaml parse failed",
+			TaskLogFields(ctx, "yaml_parse_failed",
+				zap.Int("sanitized_len", len(sanitized)),
+				zap.Error(parseErr),
+			)...,
+		)
 		return nil, NewConvertError(ConvertErrorYAMLParse, "yaml parse failed", parseErr)
 	}
 
 	schemaErr := sc.validateSchema(scriptYAML, req)
 	if schemaErr != nil {
+		logn.Debug("script schema validation failed", TaskLogFields(ctx, "schema_invalid", zap.Error(schemaErr))...)
 		return nil, schemaErr
 	}
 
@@ -194,6 +366,7 @@ func (sc *ScriptConverter) normalizeAndValidate(req ConvertRequest, rawContent s
 
 	return &ConvertResult{
 		YAML:              string(normalizedYAML),
+		ScriptTitle:       strings.TrimSpace(scriptYAML.Metadata.Title),
 		Summary:           sc.generateSummary(scriptYAML),
 		ConsistencyReport: scriptYAML.ConsistencyReport,
 	}, nil

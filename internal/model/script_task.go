@@ -34,6 +34,7 @@ type ScriptTaskModel interface {
 	FindByTaskID(ctx context.Context, taskID string) (*ScriptTask, error)
 	ListByUser(ctx context.Context, userID int64, limit, offset int64) ([]*ScriptTask, error)
 	CountByUser(ctx context.Context, userID int64) (int64, error)
+	MarkUnfinishedFailed(ctx context.Context, errMsg string) (int64, error)
 	// END: customizable methods
 }
 
@@ -153,6 +154,15 @@ func (m *defaultScriptTaskModel) CountByUser(ctx context.Context, userID int64) 
 	default:
 		return 0, err
 	}
+}
+
+func (m *defaultScriptTaskModel) MarkUnfinishedFailed(ctx context.Context, errMsg string) (int64, error) {
+	query := `UPDATE ` + m.table + ` SET status = ?, err_msg = ?, updated_at = ? WHERE status IN (?, ?)`
+	result, err := m.conn.ExecCtx(ctx, query, "failed", errMsg, time.Now(), "pending", "running")
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // END: customizable methods

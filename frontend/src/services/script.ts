@@ -1,4 +1,4 @@
-import client, { LONG_TASK_REQUEST_TIMEOUT } from "@/lib/axios"
+import client, { LONG_TASK_REQUEST_TIMEOUT, buildApiUrl, getAccessToken } from "@/lib/axios"
 import type {
   ApiResponse,
   SaveScriptResultRequest,
@@ -7,6 +7,7 @@ import type {
   ScriptDetailResponse,
   ScriptListParams,
   ScriptListResponse,
+  ScriptTaskEvent,
 } from "@/types"
 
 export const convertScript = async (data: ScriptConvertRequest) => {
@@ -43,4 +44,37 @@ export const saveScriptResult = async (
     data
   )
   return response.data
+}
+
+export const openScriptEventStream = (
+  eventUrl: string,
+  onEvent: (event: ScriptTaskEvent) => void,
+  onError?: (event: Event) => void
+) => {
+  const accessToken = getAccessToken()
+  if (!accessToken) {
+    throw new Error("登录状态已失效，请重新登录后再试。")
+  }
+
+  const resolvedUrl = buildApiUrl(eventUrl)
+  const streamUrl = new URL(
+    resolvedUrl,
+    typeof window !== "undefined" ? window.location.origin : "http://localhost"
+  )
+  streamUrl.searchParams.set("access_token", accessToken)
+
+  const eventSource = new EventSource(streamUrl.toString())
+  eventSource.addEventListener("script-task", (rawEvent) => {
+    const messageEvent = rawEvent as MessageEvent<string>
+    try {
+      const payload = JSON.parse(messageEvent.data) as ScriptTaskEvent
+      onEvent(payload)
+    } catch {
+      // Ignore malformed event payloads and keep the stream alive.
+    }
+  })
+  if (onError) {
+    eventSource.onerror = onError
+  }
+  return eventSource
 }

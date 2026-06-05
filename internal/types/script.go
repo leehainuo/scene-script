@@ -19,10 +19,10 @@ type ConvertScriptReq struct {
 }
 
 type ConvertScriptResp struct {
-	ID                string                  `json:"id"`
-	YAML              string                  `json:"yaml"`
-	Summary           model.ScriptSummary     `json:"summary"`
-	ConsistencyReport model.ConsistencyReport `json:"consistency_report"`
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	DetailURL string `json:"detail_url"`
+	EventURL  string `json:"event_url"`
 }
 
 type ListScriptReq struct {

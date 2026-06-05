@@ -2,8 +2,6 @@ package script
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -16,7 +14,6 @@ import (
 	"scene-script/internal/types"
 	"scene-script/pkg/errorn"
 	"scene-script/pkg/logn"
-	"scene-script/pkg/stores/sqlx"
 )
 
 // ConvertScriptLogic - Convert novel to structured script
@@ -36,7 +33,7 @@ func NewConvertScriptLogic(c context.Context, svc *svc.ServiceContext) *ConvertS
 	}
 }
 
-// Convert - Validate, call LLM, parse YAML, persist task & result
+// Convert - Validate, create a pending task, then hand off execution to the async runner.
 func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) (*types.ConvertScriptResp, error) {
 	if len(req.Chapters) < 3 {
 		return nil, errorn.New(http.StatusBadRequest, "minimum 3 chapters required")
@@ -51,10 +48,21 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) 
 	}
 
 	taskID := service.GenerateTaskID()
+	convertReq := l.buildConvertRequest(req)
+	logCtx := service.WithTaskLogContext(l.c, taskID, time.Now())
+	l.Debug("script convert request accepted",
+		service.TaskLogFields(logCtx, "accepted",
+			zap.Int64("user_id", userID),
+			zap.Int("chapters", len(req.Chapters)),
+			zap.String("genre", req.Genre),
+			zap.String("tone", req.Tone),
+			zap.String("pacing", req.Pacing),
+		)...,
+	)
 	scriptTask := &model.ScriptTask{
 		TaskID:         taskID,
 		UserID:         userID,
-		Title:          req.Chapters[0].Title,
+		Title:          service.BuildInitialTaskTitle(convertReq.Chapters, req.Genre),
 		Genre:          req.Genre,
 		Tone:           req.Tone,
 		Pacing:         req.Pacing,
@@ -67,13 +75,35 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) 
 		return nil, errorn.New(http.StatusInternalServerError, "failed to create task")
 	}
 	scriptTask.ID = insertID
-	scriptTask.Status = "running"
-	updateErr := l.svc.ScriptTaskModel.Update(l.c, scriptTask)
-	if updateErr != nil {
-		l.Error("failed to mark script task running", zap.Error(updateErr))
-		return nil, errorn.New(http.StatusInternalServerError, "failed to update task status")
-	}
+	l.Debug("script task created",
+		service.TaskLogFields(logCtx, "task_created",
+			zap.Int64("row_id", insertID),
+		)...,
+	)
 
+	if err := l.svc.ConvertRunner.Enqueue(service.AsyncConvertJob{
+		Task:    scriptTask,
+		Request: convertReq,
+	}); err != nil {
+		l.Error("failed to enqueue script conversion", service.TaskLogFields(logCtx, "enqueue_failed", zap.Error(err))...)
+		l.markTaskFailed(scriptTask, err)
+		return nil, errorn.New(http.StatusServiceUnavailable, "conversion queue is busy, please retry")
+	}
+	l.Debug("script convert job enqueued",
+		service.TaskLogFields(logCtx, "queued",
+			zap.Int("chapters", len(convertReq.Chapters)),
+		)...,
+	)
+
+	return &types.ConvertScriptResp{
+		ID:        taskID,
+		Status:    scriptTask.Status,
+		DetailURL: "/api/v1/script/" + taskID,
+		EventURL:  "/api/v1/script/" + taskID + "/events",
+	}, nil
+}
+
+func (l *ConvertScriptLogic) buildConvertRequest(req *types.ConvertScriptReq) service.ConvertRequest {
 	convertReq := service.ConvertRequest{
 		Chapters: make([]service.ChapterInput, len(req.Chapters)),
 		Genre:    req.Genre,
@@ -81,74 +111,12 @@ func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) 
 		Pacing:   req.Pacing,
 	}
 	for i, ch := range req.Chapters {
-		convertReq.Chapters[i] = service.ChapterInput{Title: ch.Title, Text: ch.Text}
+		convertReq.Chapters[i] = service.ChapterInput{
+			Title: ch.Title,
+			Text:  ch.Text,
+		}
 	}
-
-	result, err := l.svc.ScriptConverter.Convert(l.c, convertReq)
-	if err != nil {
-		l.Error("script conversion failed", zap.Error(err))
-		l.markTaskFailed(scriptTask, err)
-		return nil, l.mapConvertError(err)
-	}
-
-	if err := l.persistSuccess(scriptTask, req, result); err != nil {
-		l.Error("failed to persist script conversion result", zap.Error(err))
-		l.markTaskFailed(scriptTask, err)
-		return nil, errorn.New(http.StatusInternalServerError, "failed to store conversion result")
-	}
-
-	return &types.ConvertScriptResp{
-		ID:                taskID,
-		YAML:              result.YAML,
-		Summary:           result.Summary,
-		ConsistencyReport: result.ConsistencyReport,
-	}, nil
-}
-
-func (l *ConvertScriptLogic) persistSuccess(scriptTask *model.ScriptTask, req *types.ConvertScriptReq, result *service.ConvertResult) error {
-	return l.svc.DB.TransactCtx(l.c, func(ctx context.Context, conn sqlx.SqlConn) error {
-		taskModel := model.NewScriptTaskModel(conn)
-		chapterModel := model.NewScriptChapterModel(conn)
-		resultModel := model.NewScriptResultModel(conn)
-
-		chapterRows := make([]*model.ScriptChapter, 0, len(req.Chapters))
-		for i, chapter := range req.Chapters {
-			chapterRows = append(chapterRows, &model.ScriptChapter{
-				TaskID:       scriptTask.TaskID,
-				ChapterIndex: i + 1,
-				ChapterTitle: chapter.Title,
-				ChapterText:  chapter.Text,
-			})
-		}
-
-		// Batch chapter persistence keeps related writes inside one transaction and avoids N+1-style per-row readback patterns.
-		if err := chapterModel.InsertBatch(ctx, chapterRows); err != nil {
-			return err
-		}
-
-		summaryJSON, err := json.Marshal(result.Summary)
-		if err != nil {
-			return err
-		}
-		consistencyJSON, err := json.Marshal(result.ConsistencyReport)
-		if err != nil {
-			return err
-		}
-
-		if _, err := resultModel.Insert(ctx, &model.ScriptResult{
-			TaskID:          scriptTask.TaskID,
-			Yaml:            result.YAML,
-			SummaryJSON:     string(summaryJSON),
-			ConsistencyJSON: string(consistencyJSON),
-			GeneratedAt:     time.Now(),
-		}); err != nil {
-			return err
-		}
-
-		scriptTask.Status = "succeeded"
-		scriptTask.ErrMsg = ""
-		return taskModel.Update(ctx, scriptTask)
-	})
+	return convertReq
 }
 
 func (l *ConvertScriptLogic) markTaskFailed(scriptTask *model.ScriptTask, err error) {
@@ -157,26 +125,6 @@ func (l *ConvertScriptLogic) markTaskFailed(scriptTask *model.ScriptTask, err er
 	if updateErr := l.svc.ScriptTaskModel.Update(l.c, scriptTask); updateErr != nil {
 		l.Error("failed to mark script task failed", zap.Error(updateErr))
 	}
-}
-
-func (l *ConvertScriptLogic) mapConvertError(err error) error {
-	var convertErr *service.ConvertError
-	if errors.As(err, &convertErr) {
-		switch convertErr.Code {
-		case service.ConvertErrorLLM:
-			if errors.Is(err, context.DeadlineExceeded) {
-				return errorn.New(http.StatusGatewayTimeout, "llm generation timed out")
-			}
-			return errorn.New(http.StatusBadGateway, "llm generation failed")
-		case service.ConvertErrorYAMLParse:
-			return errorn.New(http.StatusBadGateway, "llm returned invalid yaml")
-		case service.ConvertErrorSchema:
-			return errorn.New(http.StatusBadGateway, "llm returned yaml that does not match schema")
-		default:
-			return errorn.New(http.StatusInternalServerError, "conversion failed")
-		}
-	}
-	return errorn.New(http.StatusInternalServerError, "conversion failed")
 }
 
 func truncateErr(msg string, max int) string {

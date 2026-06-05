@@ -20,8 +20,15 @@ const (
 // AuthMiddleware - JWT authentication middleware
 func AuthMiddleware(svc *svc.ServiceContext) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Get token from header
+		// Get token from header. SSE/EventSource cannot attach custom Authorization
+		// headers, so `/events` endpoints may pass the access token through query
+		// params to keep the stream usable without weakening other routes.
 		authHeader := c.GetHeader(AuthorizationHeader)
+		if authHeader == "" && allowQueryAccessToken(c) {
+			if tokenFromQuery := strings.TrimSpace(c.Query("access_token")); tokenFromQuery != "" {
+				authHeader = BearerPrefix + tokenFromQuery
+			}
+		}
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, httpn.Response{
 				Code: http.StatusUnauthorized,
@@ -91,6 +98,20 @@ func AuthMiddleware(svc *svc.ServiceContext) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func allowQueryAccessToken(c *gin.Context) bool {
+	if c.Request.Method != http.MethodGet {
+		return false
+	}
+	if strings.TrimSpace(c.Query("access_token")) == "" {
+		return false
+	}
+	fullPath := c.FullPath()
+	if fullPath == "" {
+		fullPath = c.Request.URL.Path
+	}
+	return strings.HasSuffix(fullPath, "/events") || strings.Contains(c.Request.URL.Path, "/events")
 }
 
 // GetUserID - Get user ID from context

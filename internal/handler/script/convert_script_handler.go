@@ -1,6 +1,8 @@
 package script
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 
 	"scene-script/internal/logic/script"
@@ -32,6 +34,10 @@ func ConvertScriptHandler(svc *svc.ServiceContext) gin.HandlerFunc {
 			return
 		}
 
-		httpn.Ok(c, resp)
+		c.JSON(http.StatusAccepted, httpn.Response{
+			Code: 0,
+			Msg:  "accepted",
+			Data: resp,
+		})
 	}
 }
