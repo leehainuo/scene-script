@@ -11,7 +11,7 @@ import {
   FileUp,
   FileText,
   GripVertical,
-  History,
+  LayoutGrid,
   LoaderCircle,
   ListFilter,
   RefreshCw,
@@ -36,6 +36,7 @@ import {
   serializeScriptYaml,
 } from "@/lib/script-yaml"
 import { formatScriptStyleSummary, getPacingLabel } from "@/lib/script-display"
+import { consumeSidebarEntranceAnimation } from "@/lib/sidebar-animation"
 import { parseNovelTextToChapters } from "@/lib/text-import"
 import { cn } from "@/lib/utils"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
@@ -678,6 +679,7 @@ export default function ScriptWorkshopPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { user, logout: clearAuth } = useAuthStore()
+  const shouldAnimateSidebarOnMount = useRef(consumeSidebarEntranceAnimation()).current
 
   const [draft, setDraft] = useState<ScriptConvertRequest>(() => {
     if (typeof window === "undefined") {
@@ -1816,13 +1818,13 @@ export default function ScriptWorkshopPage() {
           <AppSidebar
             activeKey={sidebarView}
             username={user?.username}
-            footerLabel={activeStatus.label}
+            animateItemsOnMount={shouldAnimateSidebarOnMount}
             onLogoClick={() => navigate("/")}
             authActionLabel="登出"
             onAuthAction={handleLogout}
             items={[
               { key: "workspace", label: "工作台", icon: Wand2, onClick: () => setSearchParams({ view: "workspace" }) },
-              { key: "history", label: "作品", icon: History, onClick: () => setSearchParams({ view: "history" }) },
+              { key: "history", label: "作品", icon: LayoutGrid, onClick: () => setSearchParams({ view: "history" }) },
               {
                 key: "detail",
                 label: "详情",
