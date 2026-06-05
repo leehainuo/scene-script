@@ -246,3 +246,65 @@ func TestConvertRepairsSchemaViolations(t *testing.T) {
 		t.Fatalf("unexpected summary after repair: %#v", result.Summary)
 	}
 }
+
+func TestSanitizeQuotedYAMLTextConvertsBrokenQuotedSummary(t *testing.T) {
+	raw := "chapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"他抖开油纸包，墨迹晕染：‘我封他们进钟，因钟能困住时间…可困住我的，是他们的时辰。’”\n    scenes: []\n"
+
+	sanitized := sanitizeQuotedYAMLText(raw)
+
+	if !strings.Contains(sanitized, "summary: |-") {
+		t.Fatalf("expected summary to be rewritten as block scalar, got %s", sanitized)
+	}
+	if !strings.Contains(sanitized, "  他抖开油纸包") {
+		t.Fatalf("expected rewritten block scalar body, got %s", sanitized)
+	}
+}
+
+func TestBuildInitialTaskTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		chapters []ChapterInput
+		genre    string
+		want     string
+	}{
+		{
+			name: "prefer first non generic chapter title",
+			chapters: []ChapterInput{
+				{Title: "第一章"},
+				{Title: "钟楼来信"},
+				{Title: "第三章"},
+			},
+			genre: "悬疑",
+			want:  "钟楼来信",
+		},
+		{
+			name: "fallback to genre draft title",
+			chapters: []ChapterInput{
+				{Title: "第一章"},
+				{Title: "第二章"},
+				{Title: "第三章"},
+			},
+			genre: "悬疑",
+			want:  "悬疑剧本草稿（3章）",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BuildInitialTaskTitle(tc.chapters, tc.genre)
+			if got != tc.want {
+				t.Fatalf("unexpected task title: want %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestResolveFinalTaskTitle(t *testing.T) {
+	if got := ResolveFinalTaskTitle("悬疑剧本草稿（3章）", "旧宅疑云"); got != "旧宅疑云" {
+		t.Fatalf("expected generated title to win, got %q", got)
+	}
+
+	if got := ResolveFinalTaskTitle("悬疑剧本草稿（3章）", "第一章"); got != "悬疑剧本草稿（3章）" {
+		t.Fatalf("expected generic generated title to be ignored, got %q", got)
+	}
+}

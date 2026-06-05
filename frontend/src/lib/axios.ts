@@ -15,6 +15,22 @@ const baseURL = isDev && !API_BASE_URL
   ? `/api/${API_VERSION}`
   : `${API_BASE_URL}/api/${API_VERSION}`
 
+export const buildApiUrl = (path: string) => {
+  if (!path) {
+    return path
+  }
+  if (/^https?:\/\//.test(path)) {
+    return path
+  }
+  if (path.startsWith("/api/")) {
+    return API_BASE_URL ? `${API_BASE_URL}${path}` : path
+  }
+  if (path.startsWith("/")) {
+    return API_BASE_URL ? `${API_BASE_URL}${path}` : path
+  }
+  return `${baseURL}/${path.replace(/^\/+/, "")}`
+}
+
 // Token Storage Keys
 const ACCESS_TOKEN_KEY = "access_token"
 const REFRESH_TOKEN_KEY = "refresh_token"

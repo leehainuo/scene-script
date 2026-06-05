@@ -100,9 +100,27 @@ export interface ScriptConsistencyReport {
 
 export interface ScriptConvertResponse {
   id: string
-  yaml: string
-  summary: ScriptSummary
-  consistency_report: ScriptConsistencyReport
+  status: "pending" | "running" | "succeeded" | "failed" | string
+  detail_url: string
+  event_url: string
+}
+
+export interface ScriptTaskEvent {
+  task_id: string
+  status: "pending" | "running" | "succeeded" | "failed" | string
+  stage:
+    | "queued"
+    | "starting"
+    | "generating"
+    | "validating"
+    | "repairing"
+    | "persisting"
+    | "completed"
+    | "failed"
+    | string
+  message?: string
+  error?: string
+  timestamp: string
 }
 
 export interface ScriptHistoryItem {

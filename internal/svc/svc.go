@@ -1,9 +1,12 @@
 package svc
 
 import (
+	"context"
+
 	"scene-script/config"
 	"scene-script/internal/model"
 	"scene-script/internal/service"
+	"scene-script/pkg/logn"
 	"scene-script/pkg/stores/redis"
 	"scene-script/pkg/stores/sqlx"
 	"scene-script/pkg/token"
@@ -16,6 +19,8 @@ type ServiceContext struct {
 	Redis           *redis.Client
 	Token           *token.Manager
 	ScriptConverter *service.ScriptConverter
+	TaskEventBroker *service.ScriptTaskEventBroker
+	ConvertRunner   *service.AsyncScriptConvertRunner
 
 	// Models
 	UserModel          model.UserModel
@@ -49,6 +54,14 @@ func NewServiceContext(c *config.Config) (*ServiceContext, error) {
 	if err != nil {
 		return nil, err
 	}
+	taskEventBroker := service.NewScriptTaskEventBroker()
+	scriptTaskModel := model.NewScriptTaskModel(conn)
+	if affected, err := scriptTaskModel.MarkUnfinishedFailed(context.Background(), "service restarted before task completed"); err != nil {
+		return nil, err
+	} else if affected > 0 {
+		logn.Warn("marked unfinished script tasks as failed after restart")
+	}
+	convertRunner := service.NewAsyncScriptConvertRunner(conn, scriptTaskModel, scriptConverter, taskEventBroker)
 
 	return &ServiceContext{
 		Config:          c,
@@ -56,10 +69,12 @@ func NewServiceContext(c *config.Config) (*ServiceContext, error) {
 		Redis:           rdb,
 		Token:           m,
 		ScriptConverter: scriptConverter,
+		TaskEventBroker: taskEventBroker,
+		ConvertRunner:   convertRunner,
 
 		// Init models with SqlConn interface
 		UserModel:          model.NewUserModel(conn),
-		ScriptTaskModel:    model.NewScriptTaskModel(conn),
+		ScriptTaskModel:    scriptTaskModel,
 		ScriptChapterModel: model.NewScriptChapterModel(conn),
 		ScriptResultModel:  model.NewScriptResultModel(conn),
 	}, nil
