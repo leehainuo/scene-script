@@ -10,6 +10,7 @@ import (
 )
 
 const defaultConvertSystemPrompt = "你是一位资深编剧，擅长将小说改编为结构化剧本。你必须只输出 YAML，不得输出解释、代码块围栏或额外说明。"
+const defaultSummarizeSystemPrompt = "你是一位小说改编策划助手。你需要在不丢失关键情节的前提下，将长章节压缩成适合后续剧本生成的结构化摘要，只输出纯文本，不要输出 YAML、JSON、Markdown 标题或额外解释。"
 
 const defaultRepairSystemPrompt = "你是一位剧本 YAML 修复专家。你只能修复 YAML 结构和缺失字段，必须保持原故事语义尽量不变，只返回修复后的 YAML 正文。"
 
@@ -74,6 +75,42 @@ func (pm *PromptManager) ConvertPrompt(req ConvertRequest) (systemPrompt, userPr
 
 	userPrompt = renderPromptTemplate(template, req, time.Now())
 	userPrompt = strings.TrimSpace(userPrompt) + "\n\n" + pm.schemaContract(req, time.Now())
+	return systemPrompt, userPrompt
+}
+
+func (pm *PromptManager) ChapterSummaryPrompt(req ConvertRequest, chapter ChapterInput, chapterIndex int, targetChars int) (systemPrompt, userPrompt string) {
+	systemPrompt = defaultSummarizeSystemPrompt
+	userPrompt = fmt.Sprintf(`请把下面这章长篇小说内容压缩成适合“小说转剧本”后续生成的章节摘要。
+
+目标：
+- 保留人物、地点、关键事件、冲突、转折、结尾状态
+- 保留能够影响后续剧本结构的伏笔和因果
+- 删除大段修辞、重复心理描写和无关环境铺陈
+- 输出长度尽量控制在 %d 字以内，但不能丢失关键情节
+
+输出要求：
+- 只输出纯文本
+- 第一行必须是：章节标题：%s
+- 后续内容用短段落组织，不要编号，不要 YAML，不要 Markdown
+- 如果出现关键角色、地点或道具，请直接在摘要中明确写出
+- 不要虚构原文没有的信息
+
+改编设定：
+- 体裁：%s
+- 语气：%s
+- 节奏：%s
+- 章节序号：第 %d 章
+
+原始章节内容：
+%s`,
+		targetChars,
+		strings.TrimSpace(chapter.Title),
+		req.Genre,
+		req.Tone,
+		req.Pacing,
+		chapterIndex+1,
+		strings.TrimSpace(chapter.Text),
+	)
 	return systemPrompt, userPrompt
 }
 

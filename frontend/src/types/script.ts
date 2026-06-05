@@ -111,6 +111,7 @@ export interface ScriptTaskEvent {
   stage:
     | "queued"
     | "starting"
+    | "summarizing"
     | "generating"
     | "validating"
     | "repairing"

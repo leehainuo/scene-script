@@ -62,6 +62,12 @@ type ConvertProgress struct {
 
 type ConvertProgressReporter func(ConvertProgress)
 
+const (
+	longFormTotalCharsThreshold    = 12000
+	longFormSingleChapterThreshold = 4500
+	longFormSummaryTargetChars     = 900
+)
+
 // NewScriptConverter - Create a new script converter.
 func NewScriptConverter(cfg *config.LLMConf, llm LLMProvider) (*ScriptConverter, error) {
 	if llm == nil {
@@ -98,8 +104,28 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 			zap.String("pacing", req.Pacing),
 		)...,
 	)
+	workingReq := req
+	preprocessUsage := (*einoSchema.TokenUsage)(nil)
+	if sc.shouldUseLongFormMode(req) {
+		sc.reportProgress(report, ScriptTaskStageSummarizing, "原文篇幅较长，正在逐章提炼摘要后再生成剧本。")
+		compressedReq, usage, err := sc.compressLongFormRequest(ctx, req)
+		if err != nil {
+			logn.Error("script converter long form summarizing failed", TaskLogFields(ctx, ScriptTaskStageSummarizing, zap.Error(err))...)
+			return nil, err
+		}
+		workingReq = compressedReq
+		preprocessUsage = usage
+		logn.Debug("script converter long form summarized",
+			TaskLogFields(ctx, ScriptTaskStageSummarizing,
+				zap.Int("chapters", len(req.Chapters)),
+				zap.Int("total_chars_before", totalChapterChars(req.Chapters)),
+				zap.Int("total_chars_after", totalChapterChars(workingReq.Chapters)),
+			)...,
+		)
+	}
+
 	sc.reportProgress(report, ScriptTaskStageGenerating, "正在调用大模型生成剧本 YAML。")
-	systemPrompt, userPrompt := sc.promptManager.ConvertPrompt(req)
+	systemPrompt, userPrompt := sc.promptManager.ConvertPrompt(workingReq)
 	llmResp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		logn.Error("script converter initial generation failed", TaskLogFields(ctx, ScriptTaskStageGenerating, zap.Error(err))...)
@@ -112,9 +138,9 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 	)
 
 	sc.reportProgress(report, ScriptTaskStageValidating, "首轮生成完成，正在做 YAML 与 schema 校验。")
-	result, convErr := sc.normalizeAndValidate(ctx, req, llmResp.Content)
+	result, convErr := sc.normalizeAndValidate(ctx, workingReq, llmResp.Content)
 	if convErr == nil {
-		result.Usage = llmResp.Usage
+		result.Usage = mergeTokenUsage(preprocessUsage, llmResp.Usage)
 		logn.Debug("script converter validated on first pass",
 			TaskLogFields(ctx, ScriptTaskStageValidating,
 				zap.Int("yaml_len", len(result.YAML)),
@@ -144,7 +170,7 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 			)...,
 		)
 		sc.reportProgress(report, ScriptTaskStageRepairing, fmt.Sprintf("首轮结果未通过校验，正在执行第 %d 次修复。", attempt))
-		repairSystem, repairPrompt := sc.promptManager.RepairPrompt(req, lastOutput, lastErr, attempt)
+		repairSystem, repairPrompt := sc.promptManager.RepairPrompt(workingReq, lastOutput, lastErr, attempt)
 		repairResp, repairErr := sc.llm.GenerateScript(ctx, repairSystem, repairPrompt)
 		if repairErr != nil {
 			logn.Error("script converter repair generation failed",
@@ -157,9 +183,9 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 		}
 
 		sc.reportProgress(report, ScriptTaskStageValidating, fmt.Sprintf("第 %d 次修复完成，正在重新校验结果。", attempt))
-		result, convErr = sc.normalizeAndValidate(ctx, req, repairResp.Content)
+		result, convErr = sc.normalizeAndValidate(ctx, workingReq, repairResp.Content)
 		if convErr == nil {
-			result.Usage = mergeTokenUsage(llmResp.Usage, repairResp.Usage)
+			result.Usage = mergeTokenUsage(preprocessUsage, llmResp.Usage, repairResp.Usage)
 			logn.Debug("script converter repair succeeded",
 				TaskLogFields(ctx, ScriptTaskStageRepairing,
 					zap.Int("attempt", attempt),
@@ -194,6 +220,76 @@ func (sc *ScriptConverter) reportProgress(report ConvertProgressReporter, stage,
 		Stage:   stage,
 		Message: message,
 	})
+}
+
+func (sc *ScriptConverter) shouldUseLongFormMode(req ConvertRequest) bool {
+	if totalChapterChars(req.Chapters) >= longFormTotalCharsThreshold {
+		return true
+	}
+	for _, chapter := range req.Chapters {
+		if len([]rune(strings.TrimSpace(chapter.Text))) >= longFormSingleChapterThreshold {
+			return true
+		}
+	}
+	return false
+}
+
+func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req ConvertRequest) (ConvertRequest, *einoSchema.TokenUsage, error) {
+	compressed := ConvertRequest{
+		Chapters: make([]ChapterInput, len(req.Chapters)),
+		Genre:    req.Genre,
+		Tone:     req.Tone,
+		Pacing:   req.Pacing,
+	}
+
+	usages := make([]*einoSchema.TokenUsage, 0, len(req.Chapters))
+	for index, chapter := range req.Chapters {
+		systemPrompt, userPrompt := sc.promptManager.ChapterSummaryPrompt(req, chapter, index, longFormSummaryTargetChars)
+		resp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
+		if err != nil {
+			return ConvertRequest{}, nil, err
+		}
+
+		compressed.Chapters[index] = ChapterInput{
+			Title: chapter.Title,
+			Text:  normalizeChapterSummary(chapter.Title, resp.Content),
+		}
+		usages = append(usages, resp.Usage)
+	}
+
+	return compressed, mergeTokenUsage(usages...), nil
+}
+
+func normalizeChapterSummary(title, raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return fmt.Sprintf("章节标题：%s\n该章节摘要为空，请回退到原文重新生成。", strings.TrimSpace(title))
+	}
+
+	lines := strings.Split(text, "\n")
+	normalized := make([]string, 0, len(lines)+1)
+	header := fmt.Sprintf("章节标题：%s", strings.TrimSpace(title))
+	if len(lines) == 0 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "章节标题：") {
+		normalized = append(normalized, header)
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		normalized = append(normalized, trimmed)
+	}
+
+	return strings.Join(normalized, "\n")
+}
+
+func totalChapterChars(chapters []ChapterInput) int {
+	total := 0
+	for _, chapter := range chapters {
+		total += len([]rune(strings.TrimSpace(chapter.Text)))
+	}
+	return total
 }
 
 // NormalizeEditedYAML validates and normalizes user-edited YAML against the

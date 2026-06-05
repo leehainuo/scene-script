@@ -308,3 +308,84 @@ func TestResolveFinalTaskTitle(t *testing.T) {
 		t.Fatalf("expected generic generated title to be ignored, got %q", got)
 	}
 }
+
+func TestShouldUseLongFormMode(t *testing.T) {
+	converter := testConverter(t, "")
+
+	shortReq := ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: strings.Repeat("短文本", 200)},
+			{Title: "第二章", Text: strings.Repeat("短文本", 200)},
+			{Title: "第三章", Text: strings.Repeat("短文本", 200)},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+	if converter.shouldUseLongFormMode(shortReq) {
+		t.Fatal("expected short request not to use long form mode")
+	}
+
+	longReq := ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: strings.Repeat("很长的正文。", 2200)},
+			{Title: "第二章", Text: strings.Repeat("很长的正文。", 200)},
+			{Title: "第三章", Text: strings.Repeat("很长的正文。", 200)},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+	if !converter.shouldUseLongFormMode(longReq) {
+		t.Fatal("expected long request to use long form mode")
+	}
+}
+
+func TestConvertWithLongFormSummarization(t *testing.T) {
+	validYAML := "version: \"1.0\"\nmetadata:\n  title: \"旧宅疑云\"\n  author: \"未知作者\"\n  genre: \"悬疑\"\n  tone: \"压抑\"\n  pacing: \"medium\"\n  source_chapters: 3\n  generated_at: \"2025-06-05T12:30:00Z\"\ndramatis_personae:\n  - name: \"张三\"\n    archetype: \"主角\"\n    motivation: \"查明真相\"\n    traits: [\"冷静\"]\n    relations: []\n    first_appearance: \"Chapter 1\"\nsettings:\n  - name: \"旧宅\"\n    description: \"废弃多年的老宅\"\n    importance: \"high\"\nchapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"张三回到旧宅。\"\n    scenes: []\n  - id: \"ch2\"\n    title: \"第二章\"\n    summary: \"调查逐步深入。\"\n    scenes: []\n  - id: \"ch3\"\n    title: \"第三章\"\n    summary: \"危险开始逼近。\"\n    scenes: []\nconsistency_report:\n  roles_missing: []\n  settings_missing: []\n  dangling_refs: []\n"
+	llm := &fakeLLMProvider{
+		responses: []string{
+			"章节标题：第一章\n张三回到旧宅，发现失踪多年的线索。",
+			"章节标题：第二章\n张三调查旧宅，并怀疑李四隐瞒真相。",
+			"章节标题：第三章\n张三准备对质，危险逐步逼近。",
+			validYAML,
+		},
+	}
+	converter, err := NewScriptConverter(&config.LLMConf{
+		Prompt: config.LLMPromptConf{
+			System:            "system",
+			Template:          "体裁: {genre}\n语气: {tone}\n节奏: {pacing}\n\n小说内容:\n{chapters_text}",
+			MaxRepairAttempts: 1,
+		},
+	}, llm)
+	if err != nil {
+		t.Fatalf("new converter failed: %v", err)
+	}
+
+	var stages []string
+	result, err := converter.ConvertWithProgress(context.Background(), ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: strings.Repeat("旧宅正文。", 2200)},
+			{Title: "第二章", Text: strings.Repeat("调查正文。", 2200)},
+			{Title: "第三章", Text: strings.Repeat("对质正文。", 2200)},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}, func(progress ConvertProgress) {
+		stages = append(stages, progress.Stage)
+	})
+	if err != nil {
+		t.Fatalf("convert failed: %v", err)
+	}
+
+	if llm.calls != 4 {
+		t.Fatalf("expected 4 llm calls (3 summarize + 1 generate), got %d", llm.calls)
+	}
+	if !strings.Contains(strings.Join(stages, ","), ScriptTaskStageSummarizing) {
+		t.Fatalf("expected progress to include summarizing, got %#v", stages)
+	}
+	if result.Summary.Chapters != 3 {
+		t.Fatalf("unexpected summary: %#v", result.Summary)
+	}
+}

@@ -251,6 +251,8 @@ function getGenerationStepText(stage?: string, message?: string) {
       return "任务已进入队列，等待后台执行。"
     case "starting":
       return "后台任务已启动，正在准备本次转换。"
+    case "summarizing":
+      return "原文篇幅较长，正在逐章提炼摘要后再生成剧本。"
     case "generating":
       return "正在调用大模型生成角色、场景与节拍结构。"
     case "validating":
