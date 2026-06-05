@@ -8,6 +8,7 @@ import {
   CircleCheckBig,
   Copy,
   Download,
+  FileUp,
   FileText,
   GripVertical,
   History,
@@ -35,6 +36,7 @@ import {
   serializeScriptYaml,
 } from "@/lib/script-yaml"
 import { formatScriptStyleSummary, getPacingLabel } from "@/lib/script-display"
+import { parseNovelTextToChapters } from "@/lib/text-import"
 import { cn } from "@/lib/utils"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
 import { toast } from "sonner"
@@ -90,12 +92,16 @@ type ResultView = "overview" | "yaml" | "structure"
 type SidebarView = "workspace" | "history" | "detail"
 type ScriptTaskStatus = "pending" | "running" | "succeeded" | "failed"
 type RegistryTab = "characters" | "settings"
+type WorkspaceInputMode = "chapter" | "import"
+type ChapterCompletionState = "empty" | "partial" | "ready"
 type ValidationErrors = Record<string, string>
 type RenameConfirmState = {
   kind: RegistryTab
   previousName: string
   nextName: string
 } | null
+
+type ImportedChapterDraft = ScriptChapterInput
 
 const DRAFT_STORAGE_KEY = "script-workshop-draft"
 
@@ -190,6 +196,26 @@ function replaceLiteralText(source: string, from: string, to: string) {
     return source
   }
   return source.split(from).join(to)
+}
+
+function getChapterCompletionState(chapter: ScriptChapterInput): ChapterCompletionState {
+  const hasTitle = chapter.title.trim().length > 0
+  const hasText = chapter.text.trim().length > 0
+  if (hasTitle && hasText) {
+    return "ready"
+  }
+  if (hasTitle || hasText) {
+    return "partial"
+  }
+  return "empty"
+}
+
+function getTextCount(text: string) {
+  return text.trim().replace(/\s+/g, "").length
+}
+
+function formatTextCount(count: number) {
+  return `${count.toLocaleString("zh-CN")} 字`
 }
 
 function createDefaultDraft(): ScriptConvertRequest {
@@ -677,8 +703,6 @@ export default function ScriptWorkshopPage() {
   const [statusFilters, setStatusFilters] = useState<ScriptTaskStatus[]>([])
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false)
   const [search, setSearch] = useState("")
-  const [error, setError] = useState("")
-  const [feedback, setFeedback] = useState("")
   const [history, setHistory] = useState<ScriptHistoryItem[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [activeResult, setActiveResult] = useState<WorkshopResult | null>(null)
@@ -700,6 +724,10 @@ export default function ScriptWorkshopPage() {
   const [showValidationErrors, setShowValidationErrors] = useState(false)
   const [renameConfirm, setRenameConfirm] = useState<RenameConfirmState>(null)
   const [floatingAction, setFloatingAction] = useState<"submit" | "reset" | null>(null)
+  const [workspaceInputMode, setWorkspaceInputMode] = useState<WorkspaceInputMode>("chapter")
+  const [importSourceText, setImportSourceText] = useState("")
+  const [importedChapters, setImportedChapters] = useState<ImportedChapterDraft[]>([])
+  const [activeImportedChapterIndex, setActiveImportedChapterIndex] = useState(0)
   const statusMenuRef = useRef<HTMLDivElement | null>(null)
   const characterRenameOriginRef = useRef<Record<number, string>>({})
   const settingRenameOriginRef = useRef<Record<number, string>>({})
@@ -763,10 +791,10 @@ export default function ScriptWorkshopPage() {
       if (response.code === 0) {
         setHistory(response.data.items)
       } else {
-        setError(response.msg || "历史记录加载失败")
+        toast.error(response.msg || "历史记录加载失败")
       }
     } catch (err) {
-      setError(extractErrorMessage(err, "历史记录加载失败"))
+      toast.error(extractErrorMessage(err, "历史记录加载失败"))
     } finally {
       setIsHistoryLoading(false)
     }
@@ -839,7 +867,7 @@ export default function ScriptWorkshopPage() {
         setGenerationStepIndex(0)
         setGenerationStepText(GENERATION_STEPS[0])
         setTaskProgressMessage(event.error || event.message || "任务执行失败。")
-        setError(event.error || event.message || "生成失败，请稍后重试。")
+        toast.error(event.error || event.message || "生成失败，请稍后重试。")
         await loadDetailById(taskId)
         await loadHistory()
       }
@@ -874,15 +902,11 @@ export default function ScriptWorkshopPage() {
 
   async function loadDetailById(taskId: string, successMessage?: string) {
     setSelectedTaskId(taskId)
-    setError("")
-    if (!successMessage) {
-      setFeedback("")
-    }
 
     try {
       const response = await getScriptDetail(taskId)
       if (response.code !== 0 || !response.data) {
-        setError(response.msg || "历史详情加载失败。")
+        toast.error(response.msg || "历史详情加载失败。")
         return
       }
 
@@ -898,7 +922,7 @@ export default function ScriptWorkshopPage() {
         setSearchParams({ view: "detail", id: taskId })
         setView("overview")
         if (successMessage) {
-          setFeedback(successMessage)
+          toast.success(successMessage)
         }
       } else {
         setResultForEditing(null)
@@ -914,7 +938,7 @@ export default function ScriptWorkshopPage() {
         }
       }
     } catch (err) {
-      setError(extractErrorMessage(err, "历史详情加载失败。"))
+      toast.error(extractErrorMessage(err, "历史详情加载失败。"))
     }
   }
 
@@ -1060,7 +1084,7 @@ export default function ScriptWorkshopPage() {
         beats: nextBeats,
       }
     })
-    setFeedback("节拍顺序已更新，YAML 结构已同步。")
+    toast.success("节拍顺序已更新，YAML 结构已同步。")
   }
 
   function updateScriptCharacter(
@@ -1309,15 +1333,88 @@ export default function ScriptWorkshopPage() {
   function handleResetDraft() {
     setDraft(createDefaultDraft())
     setActiveChapterIndex(0)
-    setFeedback("草稿已重置。")
+    setActiveImportedChapterIndex(0)
+    setWorkspaceInputMode("chapter")
+    toast.success("草稿已重置。")
+  }
+
+  function handleParseImportedText() {
+    const trimmed = importSourceText.trim()
+    if (!trimmed) {
+      toast.error("请先粘贴小说全文，再开始自动拆章。")
+      setImportedChapters([])
+      setActiveImportedChapterIndex(0)
+      return
+    }
+
+    const chapters = parseNovelTextToChapters(trimmed).map((chapter, index) => ({
+      title: chapter.title || `第 ${index + 1} 章`,
+      text: chapter.text,
+    }))
+
+    setImportedChapters(chapters)
+    setActiveImportedChapterIndex(0)
+    if (chapters.length < 2) {
+      toast.error("未识别到明确章节标题，已按段落结构给出拆分初稿，请确认后再导入。")
+      return
+    }
+  }
+
+  function handleImportedChapterChange(
+    index: number,
+    field: keyof ScriptChapterInput,
+    value: string
+  ) {
+    setImportedChapters((current) =>
+      current.map((chapter, chapterIndex) =>
+        chapterIndex === index ? { ...chapter, [field]: value } : chapter
+      )
+    )
+  }
+
+  function handleAddImportedChapter() {
+    setImportedChapters((current) => {
+      const next = [...current, { title: `第 ${current.length + 1} 章`, text: "" }]
+      setActiveImportedChapterIndex(next.length - 1)
+      return next
+    })
+  }
+
+  function handleRemoveImportedChapter(index: number) {
+    setImportedChapters((current) => {
+      const next = current.filter((_, chapterIndex) => chapterIndex !== index)
+      setActiveImportedChapterIndex((prev) => Math.max(0, Math.min(prev > index ? prev - 1 : prev, next.length - 1)))
+      return next
+    })
+  }
+
+  function handleApplyImportedChapters() {
+    const normalized = importedChapters
+      .map((chapter, index) => ({
+        title: chapter.title.trim() || `第 ${index + 1} 章`,
+        text: chapter.text.trim(),
+      }))
+      .filter((chapter) => chapter.title || chapter.text)
+
+    if (normalized.length === 0) {
+      toast.error("请至少保留一章内容后再导入。")
+      return
+    }
+
+    setDraft((current) => ({
+      ...current,
+      chapters: normalized,
+    }))
+    setActiveChapterIndex(0)
+    setActiveImportedChapterIndex(0)
+    setWorkspaceInputMode("chapter")
+    toast.success(`已导入 ${normalized.length} 章内容，你可以继续调整后开始生成。`)
   }
 
   async function handleSubmit(
     event: Parameters<NonNullable<ComponentProps<"form">["onSubmit"]>>[0]
   ) {
     event.preventDefault()
-    setError("")
-    setFeedback("")
 
     const trimmedChapters = draft.chapters.map((chapter) => ({
       title: chapter.title.trim(),
@@ -1325,11 +1422,11 @@ export default function ScriptWorkshopPage() {
     }))
 
     if (trimmedChapters.length < 3) {
-      setError("至少需要输入 3 个章节内容。")
+      toast.error("至少需要输入 3 个章节内容。")
       return
     }
     if (trimmedChapters.some((chapter) => !chapter.title || !chapter.text)) {
-      setError("每一章都需要填写标题和正文。")
+      toast.error("每一章都需要填写标题和正文。")
       return
     }
 
@@ -1343,7 +1440,7 @@ export default function ScriptWorkshopPage() {
       })
 
       if (response.code !== 0 || !response.data) {
-        setError(response.msg || "生成失败，请稍后重试。")
+        toast.error(response.msg || "生成失败，请稍后重试。")
         return
       }
 
@@ -1371,7 +1468,7 @@ export default function ScriptWorkshopPage() {
       await loadHistory()
       startTaskEventStream(response.data.id, response.data.event_url)
     } catch (err) {
-      setError(extractErrorMessage(err, "生成失败，请检查服务状态后重试。"))
+      toast.error(extractErrorMessage(err, "生成失败，请检查服务状态后重试。"))
     } finally {
       if (!taskEventSourceRef.current) {
         setIsSubmitting(false)
@@ -1390,9 +1487,9 @@ export default function ScriptWorkshopPage() {
     if (!liveYaml) return
     try {
       await navigator.clipboard.writeText(liveYaml)
-      setFeedback("YAML 已复制到剪贴板。")
+      toast.success("YAML 已复制到剪贴板。")
     } catch {
-      setError("复制失败，请手动选中复制。")
+      toast.error("复制失败，请手动选中复制。")
     }
   }
 
@@ -1400,7 +1497,7 @@ export default function ScriptWorkshopPage() {
     if (!liveYaml || !activeResult) return
     const name = `${activeResult.metadata.title || "script-workshop"}.yaml`
     downloadTextFile(name, liveYaml)
-    setFeedback("YAML 文件已开始下载。")
+    toast.success("YAML 文件已开始下载。")
   }
 
   async function handleSaveResult() {
@@ -1419,8 +1516,6 @@ export default function ScriptWorkshopPage() {
       return
     }
 
-    setError("")
-    setFeedback("")
     setIsSaving(true)
     try {
       const response = await saveScriptResult(activeResult.id, { yaml: liveYaml })
@@ -1508,6 +1603,81 @@ export default function ScriptWorkshopPage() {
         : `已选 ${statusFilters.length} 项`
 
   const activeChapter = draft.chapters[activeChapterIndex] ?? draft.chapters[0]
+  const importSourceTextCount = getTextCount(importSourceText)
+  const importedChapterSummaries = useMemo(
+    () =>
+      importedChapters.map((chapter, index) => {
+        const completionState = getChapterCompletionState(chapter)
+        const textCount = getTextCount(chapter.text)
+        return {
+          index,
+          title: chapter.title.trim() || `第 ${index + 1} 章`,
+          textCount,
+          completionState,
+          statusLabel:
+            completionState === "ready"
+              ? "可导入"
+              : completionState === "partial"
+                ? "待补全"
+                : "未开始",
+          detailLabel:
+            completionState === "ready"
+              ? formatTextCount(textCount)
+              : completionState === "partial"
+                ? "缺标题或正文"
+                : "等待输入",
+        }
+      }),
+    [importedChapters]
+  )
+  const chapterSummaries = useMemo(
+    () =>
+      draft.chapters.map((chapter, index) => {
+        const completionState = getChapterCompletionState(chapter)
+        const textCount = getTextCount(chapter.text)
+        return {
+          index,
+          title: chapter.title.trim() || `第 ${index + 1} 章`,
+          textCount,
+          completionState,
+          statusLabel:
+            completionState === "ready"
+              ? "可生成"
+              : completionState === "partial"
+                ? "待补全"
+                : "未开始",
+          detailLabel:
+            completionState === "ready"
+              ? formatTextCount(textCount)
+              : completionState === "partial"
+                ? "缺标题或正文"
+                : "等待输入",
+        }
+      }),
+    [draft.chapters]
+  )
+  const completedChaptersCount = chapterSummaries.filter(
+    (chapter) => chapter.completionState === "ready"
+  ).length
+  const incompleteChaptersCount = chapterSummaries.length - completedChaptersCount
+  const canSubmitDraft = draft.chapters.length >= 3 && incompleteChaptersCount === 0
+  const activeChapterSummary = chapterSummaries[activeChapterIndex] ?? chapterSummaries[0]
+  const activeImportedChapter =
+    importedChapters[activeImportedChapterIndex] ?? importedChapters[0] ?? null
+  const activeImportedChapterSummary =
+    importedChapterSummaries[activeImportedChapterIndex] ?? importedChapterSummaries[0]
+  const workspaceProgressText =
+    draft.chapters.length < 3
+      ? `至少需要 3 章内容。当前已有 ${draft.chapters.length} 章，还差 ${3 - draft.chapters.length} 章。`
+      : canSubmitDraft
+        ? `已完成 ${completedChaptersCount}/${draft.chapters.length} 章，可以直接开始生成。`
+        : `已有 ${draft.chapters.length} 章草稿，但仍有 ${incompleteChaptersCount} 章缺少标题或正文。`
+  const importProgressText =
+    importSourceTextCount === 0
+      ? "适合一次粘贴整篇小说，再统一拆章和校对。"
+      : importedChapters.length > 0
+        ? `已粘贴 ${formatTextCount(importSourceTextCount)}，当前识别出 ${importedChapters.length} 章。`
+        : `已粘贴 ${formatTextCount(importSourceTextCount)}，下一步可以开始自动拆章。`
   const sidebarView: SidebarView =
     searchParams.get("view") === "history" ||
     searchParams.get("view") === "detail" ||
@@ -1651,74 +1821,397 @@ export default function ScriptWorkshopPage() {
                   eyebrow="Workspace"
                   title="开始输入你的小说章节"
                   description="主输入区负责内容，右侧参数区负责改编风格，避免所有控件挤在同一层。"
+                  actions={
+                    <div className="inline-flex rounded-[20px] border border-black/8 bg-white p-1 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
+                      <button
+                        type="button"
+                        onClick={() => setWorkspaceInputMode("chapter")}
+                        className={cn(
+                          "rounded-2xl px-4 py-2 text-sm transition-colors",
+                          workspaceInputMode === "chapter"
+                            ? "bg-slate-900 text-white shadow-[0_10px_20px_rgba(15,23,42,0.12)]"
+                            : "text-slate-500 hover:text-slate-950"
+                        )}
+                      >
+                        逐章输入
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWorkspaceInputMode("import")}
+                        className={cn(
+                          "inline-flex items-center rounded-2xl px-4 py-2 text-sm transition-colors",
+                          workspaceInputMode === "import"
+                            ? "bg-slate-900 text-white shadow-[0_10px_20px_rgba(15,23,42,0.12)]"
+                            : "text-slate-500 hover:text-slate-950"
+                        )}
+                      >
+                        <FileUp className="mr-2 h-4 w-4" />
+                        全文导入
+                      </button>
+                    </div>
+                  }
                   className="overflow-hidden rounded-[34px] border-black/6 bg-white/92 shadow-[0_24px_80px_rgba(15,23,42,0.08)]"
                 >
                   <form
                     id={WORKSPACE_DRAFT_FORM_ID}
-                    className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]"
+                    className="space-y-5"
                     onSubmit={handleSubmit}
                   >
+                    <div className="rounded-[24px] border border-black/6 bg-slate-50/70 p-4 sm:p-5">
+                      <div className="grid gap-3 sm:grid-cols-3">
+                          <label className="space-y-2">
+                            <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+                              体裁
+                            </span>
+                            <div className="relative">
+                              <select
+                                aria-label="选择体裁"
+                                value={draft.genre}
+                                onChange={(event) =>
+                                  setDraft((prev) => ({ ...prev, genre: event.target.value }))
+                                }
+                                className="h-11 w-full appearance-none rounded-2xl border border-black/8 bg-white px-4 pr-10 text-sm text-slate-900 outline-none transition focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
+                              >
+                                {GENRE_OPTIONS.map((item) => (
+                                  <option key={item} value={item}>
+                                    {item}
+                                  </option>
+                                ))}
+                              </select>
+                              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            </div>
+                          </label>
+
+                          <label className="space-y-2">
+                            <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+                              语气
+                            </span>
+                            <div className="relative">
+                              <select
+                                aria-label="选择语气"
+                                value={draft.tone}
+                                onChange={(event) =>
+                                  setDraft((prev) => ({ ...prev, tone: event.target.value }))
+                                }
+                                className="h-11 w-full appearance-none rounded-2xl border border-black/8 bg-white px-4 pr-10 text-sm text-slate-900 outline-none transition focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
+                              >
+                                {TONE_OPTIONS.map((item) => (
+                                  <option key={item} value={item}>
+                                    {item}
+                                  </option>
+                                ))}
+                              </select>
+                              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            </div>
+                          </label>
+
+                          <label className="space-y-2">
+                            <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+                              节奏
+                            </span>
+                            <div className="relative">
+                              <select
+                                aria-label="选择节奏"
+                                value={draft.pacing}
+                                onChange={(event) =>
+                                  setDraft((prev) => ({
+                                    ...prev,
+                                    pacing: event.target.value as Pacing,
+                                  }))
+                                }
+                                className="h-11 w-full appearance-none rounded-2xl border border-black/8 bg-white px-4 pr-10 text-sm text-slate-900 outline-none transition focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
+                              >
+                                {PACING_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            </div>
+                          </label>
+                      </div>
+                    </div>
+
                     <div className="space-y-5">
                       <div className="rounded-[28px] border border-black/6 bg-slate-50/80 p-4 sm:p-5">
                         <div className="flex flex-col gap-4 border-b border-black/6 pb-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                                当前输入
-                              </p>
-                              <p className="mt-1 text-base font-semibold text-slate-900">
-                                第 {activeChapterIndex + 1} 章
-                              </p>
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
+                              {workspaceInputMode === "chapter" ? "当前输入" : "全文导入"}
+                            </p>
+                            <p className="mt-1 text-base font-semibold text-slate-900">
+                              {workspaceInputMode === "chapter"
+                                ? `第 ${activeChapterIndex + 1} 章`
+                                : "整篇小说正文"}
+                            </p>
+                            <p className="mt-2 text-sm text-slate-500">
+                              {workspaceInputMode === "chapter"
+                                ? workspaceProgressText
+                                : importProgressText}
+                            </p>
+                          </div>
+                          {workspaceInputMode === "chapter" ? (
+                            <>
+                              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                                {chapterSummaries.map((chapter) => (
+                                  <button
+                                    key={`${chapter.title}-${chapter.index}`}
+                                    type="button"
+                                    onClick={() => setActiveChapterIndex(chapter.index)}
+                                    className={cn(
+                                      "rounded-[22px] border px-4 py-3 text-left transition-colors",
+                                      activeChapterIndex === chapter.index
+                                        ? "border-slate-900 bg-slate-900 text-white shadow-[0_18px_36px_rgba(15,23,42,0.12)]"
+                                        : "border-black/8 bg-white text-slate-600 hover:bg-slate-50"
+                                    )}
+                                  >
+                                    <div className="flex items-center justify-between gap-3">
+                                      <p className="text-xs uppercase tracking-[0.18em] text-inherit/70">
+                                        第 {chapter.index + 1} 章
+                                      </p>
+                                      <span
+                                        className={cn(
+                                          "rounded-full px-2.5 py-1 text-[11px]",
+                                          activeChapterIndex === chapter.index
+                                            ? "bg-white/14 text-white"
+                                            : chapter.completionState === "ready"
+                                              ? "bg-emerald-50 text-emerald-700"
+                                              : chapter.completionState === "partial"
+                                                ? "bg-amber-50 text-amber-700"
+                                                : "bg-slate-100 text-slate-500"
+                                        )}
+                                      >
+                                        {chapter.statusLabel}
+                                      </span>
+                                    </div>
+                                    <p className="mt-3 line-clamp-1 text-sm font-medium">
+                                      {chapter.title}
+                                    </p>
+                                    <p className="mt-1 text-xs text-inherit/70">{chapter.detailLabel}</p>
+                                  </button>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={addChapter}
+                                  className="rounded-[22px] border border-dashed border-black/10 bg-white px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50"
+                                >
+                                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                    扩展输入
+                                  </p>
+                                  <p className="mt-3 font-medium text-slate-700">+ 新增章节</p>
+                                  <p className="mt-1 text-xs text-slate-400">
+                                    继续补充更多章节内容
+                                  </p>
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="space-y-4">
+                                <div className="rounded-[24px] border border-black/6 bg-white p-4 sm:p-5">
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                        全文粘贴
+                                      </p>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      onClick={handleParseImportedText}
+                                      className="h-10 rounded-2xl bg-slate-900 px-4 text-white hover:bg-slate-800"
+                                    >
+                                      <Check className="mr-2 h-4 w-4" />
+                                      自动拆章
+                                    </Button>
+                                  </div>
+                                  <textarea
+                                    value={importSourceText}
+                                    onChange={(event) => {
+                                      setImportSourceText(event.target.value)
+                                    }}
+                                    placeholder="把整篇小说正文粘贴到这里。建议保留原始章节标题，自动拆章会更准确。"
+                                    className="mt-4 h-56 w-full resize-none rounded-[24px] border border-black/8 bg-slate-50/70 px-5 py-5 text-[15px] leading-8 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
+                                  />
+                                </div>
+
+                                <div className="flex items-center gap-3">
+                                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                    拆章确认
+                                  </p>
+                                </div>
+
+                                {importedChapters.length > 0 ? (
+                                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                                    {importedChapterSummaries.map((chapter) => (
+                                      <button
+                                        key={`${chapter.title}-${chapter.index}`}
+                                        type="button"
+                                        onClick={() => setActiveImportedChapterIndex(chapter.index)}
+                                        className={cn(
+                                          "rounded-[22px] border px-4 py-3 text-left transition-colors",
+                                          activeImportedChapterIndex === chapter.index
+                                            ? "border-slate-900 bg-slate-900 text-white shadow-[0_18px_36px_rgba(15,23,42,0.12)]"
+                                            : "border-black/8 bg-white text-slate-600 hover:bg-slate-50"
+                                        )}
+                                      >
+                                        <div className="flex items-center justify-between gap-3">
+                                          <p className="text-xs uppercase tracking-[0.18em] text-inherit/70">
+                                            第 {chapter.index + 1} 章
+                                          </p>
+                                          <span
+                                            className={cn(
+                                              "rounded-full px-2.5 py-1 text-[11px]",
+                                              activeImportedChapterIndex === chapter.index
+                                                ? "bg-white/14 text-white"
+                                                : chapter.completionState === "ready"
+                                                  ? "bg-emerald-50 text-emerald-700"
+                                                  : chapter.completionState === "partial"
+                                                    ? "bg-amber-50 text-amber-700"
+                                                    : "bg-slate-100 text-slate-500"
+                                            )}
+                                          >
+                                            {chapter.statusLabel}
+                                          </span>
+                                        </div>
+                                        <p className="mt-3 line-clamp-1 text-sm font-medium">
+                                          {chapter.title}
+                                        </p>
+                                        <p className="mt-1 text-xs text-inherit/70">{chapter.detailLabel}</p>
+                                      </button>
+                                    ))}
+                                    <button
+                                      type="button"
+                                      onClick={handleAddImportedChapter}
+                                      className="rounded-[22px] border border-dashed border-black/10 bg-white px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50"
+                                    >
+                                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                        拆章扩展
+                                      </p>
+                                      <p className="mt-3 font-medium text-slate-700">+ 新增章节</p>
+                                      <p className="mt-1 text-xs text-slate-400">
+                                        继续补充或拆分更多章节
+                                      </p>
+                                    </button>
+                                  </div>
+                                ) : null}
+
+                                <div className="rounded-[24px] border border-black/6 bg-white p-4 sm:p-5">
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                        拆章确认
+                                      </p>
+                                      <p className="mt-1 text-sm font-medium text-slate-900">
+                                        {activeImportedChapterSummary?.title ?? "等待自动拆章"}
+                                      </p>
+                                    </div>
+                                    {activeImportedChapter ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveImportedChapter(activeImportedChapterIndex)}
+                                        className="text-slate-300 transition-colors hover:text-rose-500"
+                                        aria-label={`删除章节 ${activeImportedChapterIndex + 1}`}
+                                      >
+                                        <Trash2 className="h-5 w-5" />
+                                      </button>
+                                    ) : null}
+                                  </div>
+
+                                  <div className="mt-4 space-y-4">
+                                    {importedChapters.length === 0 ? (
+                                      <div className="flex min-h-[260px] items-center justify-center rounded-[24px] border border-dashed border-black/8 px-4 py-12 text-center text-sm leading-7 text-slate-400">
+                                        先在左侧粘贴全文并点击“自动拆章”，这里会显示可继续校对的章节结果。
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <Input
+                                          value={activeImportedChapter?.title ?? ""}
+                                          onChange={(event) =>
+                                            handleImportedChapterChange(
+                                              activeImportedChapterIndex,
+                                              "title",
+                                              event.target.value
+                                            )
+                                          }
+                                          placeholder={`第 ${activeImportedChapterIndex + 1} 章`}
+                                          className="h-12 rounded-2xl border-black/8 bg-white text-base text-slate-900 placeholder:text-slate-400"
+                                        />
+                                        <textarea
+                                          value={activeImportedChapter?.text ?? ""}
+                                          onChange={(event) =>
+                                            handleImportedChapterChange(
+                                              activeImportedChapterIndex,
+                                              "text",
+                                              event.target.value
+                                            )
+                                          }
+                                          placeholder="这一章的正文内容"
+                                          className="min-h-[360px] w-full rounded-[24px] border border-black/8 bg-white px-5 py-5 text-[15px] leading-8 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
+                                        />
+                                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-[20px] border border-black/6 bg-white/70 px-4 py-3 text-xs text-slate-500">
+                                          <span>
+                                            当前章节状态：{activeImportedChapterSummary?.statusLabel ?? "未开始"}
+                                          </span>
+                                          <span>
+                                            {activeImportedChapterSummary
+                                              ? formatTextCount(activeImportedChapterSummary.textCount)
+                                              : "0 字"}
+                                          </span>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+
+                                  <div className="mt-5 flex flex-col gap-3 border-t border-black/6 pt-4">
+                                    <Button
+                                      type="button"
+                                      onClick={handleApplyImportedChapters}
+                                      disabled={importedChapters.length === 0}
+                                      className="h-10 rounded-2xl bg-slate-900 px-4 text-white hover:bg-slate-800"
+                                    >
+                                      {importedChapters.length > 0
+                                        ? `导入 ${importedChapters.length} 章到工作台`
+                                        : "导入到工作台"}
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {workspaceInputMode === "chapter" ? (
+                          <div className="mt-5 space-y-4">
+                            <Input
+                              value={activeChapter?.title ?? ""}
+                              onChange={(event) =>
+                                updateChapter(activeChapterIndex, "title", event.target.value)
+                              }
+                              placeholder="给这一章起一个更容易理解的标题"
+                              className="h-12 rounded-2xl border-black/8 bg-white text-base text-slate-900 placeholder:text-slate-400"
+                            />
+
+                            <textarea
+                              value={activeChapter?.text ?? ""}
+                              onChange={(event) =>
+                                updateChapter(activeChapterIndex, "text", event.target.value)
+                              }
+                              placeholder="把这一章的小说正文粘贴到这里，尽量保持段落清晰。AI 会基于这些内容生成章节、场景和节拍结构。"
+                              className="min-h-[420px] w-full rounded-[26px] border border-black/8 bg-white px-5 py-5 text-[15px] leading-8 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
+                            />
+                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-[20px] border border-black/6 bg-white/70 px-4 py-3 text-xs text-slate-500">
+                              <span>
+                                当前章节状态：{activeChapterSummary?.statusLabel ?? "未开始"}
+                              </span>
+                              <span>
+                                {activeChapterSummary
+                                  ? formatTextCount(activeChapterSummary.textCount)
+                                  : "0 字"}
+                              </span>
                             </div>
-                            <span className="rounded-full border border-black/8 bg-white px-3 py-1 text-xs text-slate-500">
-                              共 {draft.chapters.length} 章
-                            </span>
                           </div>
-                          <div className="flex flex-wrap gap-2">
-                            {draft.chapters.map((chapter, index) => (
-                              <button
-                                key={`${chapter.title}-${index}`}
-                                type="button"
-                                onClick={() => setActiveChapterIndex(index)}
-                                className={cn(
-                                  "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                                  activeChapterIndex === index
-                                    ? "border-slate-900 bg-slate-900 text-white"
-                                    : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
-                                )}
-                              >
-                                第 {index + 1} 章
-                              </button>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={addChapter}
-                              className="rounded-full border border-dashed border-black/10 bg-white px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50"
-                            >
-                              + 新增章节
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="mt-5 space-y-4">
-                          <Input
-                            value={activeChapter?.title ?? ""}
-                            onChange={(event) =>
-                              updateChapter(activeChapterIndex, "title", event.target.value)
-                            }
-                            placeholder="给这一章起一个更容易理解的标题"
-                            className="h-12 rounded-2xl border-black/8 bg-white text-base text-slate-900 placeholder:text-slate-400"
-                          />
-
-                          <textarea
-                            value={activeChapter?.text ?? ""}
-                            onChange={(event) =>
-                              updateChapter(activeChapterIndex, "text", event.target.value)
-                            }
-                            placeholder="把这一章的小说正文粘贴到这里，尽量保持段落清晰。AI 会基于这些内容生成章节、场景和节拍结构。"
-                            className="min-h-[420px] w-full rounded-[26px] border border-black/8 bg-white px-5 py-5 text-[15px] leading-8 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
-                          />
-                        </div>
+                        ) : null}
                       </div>
 
                       <div className="flex flex-wrap gap-2">
@@ -1737,107 +2230,6 @@ export default function ScriptWorkshopPage() {
                         ))}
                       </div>
                     </div>
-
-                    <div className="space-y-4 xl:sticky xl:top-8 xl:self-start">
-                      <div className="rounded-[28px] border border-black/6 bg-slate-50/80 p-5">
-                        <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                          改编设定
-                        </p>
-                        <p className="mt-2 text-lg font-semibold text-slate-900">
-                          先定风格，再开始生成
-                        </p>
-                        <p className="mt-2 text-sm leading-6 text-slate-500">
-                          这些参数不需要很多，但会明显影响第一版剧本的气质和节奏。
-                        </p>
-
-                        <div className="mt-5 space-y-5">
-                          <div className="space-y-3">
-                            <Label className="text-slate-600">体裁</Label>
-                            <div className="flex flex-wrap gap-2">
-                              {GENRE_OPTIONS.map((item) => (
-                                <button
-                                  key={item}
-                                  type="button"
-                                  onClick={() =>
-                                    setDraft((prev) => ({ ...prev, genre: item }))
-                                  }
-                                  className={cn(
-                                    "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                                    draft.genre === item
-                                      ? "border-sky-200 bg-sky-50 text-sky-700"
-                                      : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
-                                  )}
-                                >
-                                  {item}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="space-y-3">
-                            <Label className="text-slate-600">语气</Label>
-                            <div className="flex flex-wrap gap-2">
-                              {TONE_OPTIONS.map((item) => (
-                                <button
-                                  key={item}
-                                  type="button"
-                                  onClick={() =>
-                                    setDraft((prev) => ({ ...prev, tone: item }))
-                                  }
-                                  className={cn(
-                                    "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                                    draft.tone === item
-                                      ? "border-slate-200 bg-slate-900 text-white"
-                                      : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
-                                  )}
-                                >
-                                  {item}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="space-y-3">
-                            <Label className="text-slate-600">节奏</Label>
-                            <div className="space-y-2">
-                              {PACING_OPTIONS.map((option) => (
-                                <button
-                                  key={option.value}
-                                  type="button"
-                                  onClick={() =>
-                                    setDraft((prev) => ({ ...prev, pacing: option.value }))
-                                  }
-                                  className={cn(
-                                    "flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition-colors",
-                                    draft.pacing === option.value
-                                      ? "border-sky-200 bg-sky-50"
-                                      : "border-black/8 bg-white hover:bg-slate-50"
-                                  )}
-                                >
-                                  <div>
-                                    <p className="text-sm font-medium text-slate-800">
-                                      {option.label}
-                                    </p>
-                                    <p className="mt-1 text-xs text-slate-400">
-                                      {option.hint}
-                                    </p>
-                                  </div>
-                                  <div
-                                    className={cn(
-                                      "h-3.5 w-3.5 rounded-full border",
-                                      draft.pacing === option.value
-                                        ? "border-slate-900 bg-slate-900"
-                                        : "border-slate-300"
-                                    )}
-                                  />
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                    </div>
                   </form>
                 </StudioPanel>
 
@@ -1846,7 +2238,7 @@ export default function ScriptWorkshopPage() {
                     <button
                       type="submit"
                       form={WORKSPACE_DRAFT_FORM_ID}
-                      disabled={isSubmitting}
+                          disabled={isSubmitting || !canSubmitDraft}
                       onMouseEnter={() => setFloatingAction("submit")}
                       onMouseLeave={() => setFloatingAction((current) => (current === "submit" ? null : current))}
                       onFocus={() => setFloatingAction("submit")}
@@ -1923,21 +2315,6 @@ export default function ScriptWorkshopPage() {
                     </button>
                   </div>
                 </div>
-
-                {(feedback || error) && (
-                  <div className="space-y-3">
-                    {feedback ? (
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                        {feedback}
-                      </div>
-                    ) : null}
-                    {error ? (
-                      <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                        {error}
-                      </div>
-                    ) : null}
-                  </div>
-                )}
               </div>
             ) : null}
 
