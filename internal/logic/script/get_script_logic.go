@@ -13,7 +13,7 @@ import (
 	"scene-script/pkg/logn"
 )
 
-// GetScriptLogic - Get script task detail (placeholder)
+// GetScriptLogic returns script task detail scoped to the authenticated user.
 type GetScriptLogic struct {
 	*logn.Logger
 	c   context.Context
