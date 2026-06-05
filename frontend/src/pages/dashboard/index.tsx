@@ -123,7 +123,7 @@ export default function DashboardPage() {
               },
               {
                 key: "history",
-                label: "列表",
+                label: "作品",
                 icon: History,
                 onClick: () => handleProtectedNavigate("/script-workshop?view=history"),
               },
@@ -160,14 +160,14 @@ export default function DashboardPage() {
                   <div className="space-y-4">
                     <div className="rounded-[24px] border border-black/6 bg-slate-50 px-4 py-4">
                       <p className="text-sm leading-7 text-slate-500">
-                        从 3 个章节以上的小说文本自动转换为结构化剧本（YAML 格式），同时保留生成列表、详情回看和一致性质检能力。
+                        从 3 个章节以上的小说文本自动转换为结构化剧本（YAML 格式），同时保留作品浏览、详情回看和一致性质检能力。
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {[
                         "3 章起步",
                         "YAML 输出",
-                        "生成列表",
+                        "作品浏览",
                         "详情回看",
                         "一致性质检",
                       ].map((item) => (
@@ -184,7 +184,7 @@ export default function DashboardPage() {
 
                 <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
                   <div className="rounded-2xl border border-black/6 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                    左侧导航支持前往工作台、生成列表和详情预览
+                    左侧导航支持前往工作台、作品和详情预览
                   </div>
                   <Button
                     onClick={() => handleProtectedNavigate("/script-workshop?view=workspace")}
@@ -204,7 +204,7 @@ export default function DashboardPage() {
                   },
                   {
                     title: "结果可继续使用",
-                    desc: "支持查看生成列表、回载详情、复制和下载 YAML。",
+                    desc: "支持查看作品、回载详情、复制和下载 YAML。",
                   },
                   {
                     title: "适合面试展示",

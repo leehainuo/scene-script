@@ -241,22 +241,22 @@ function getStatusMeta(status: string) {
     case "succeeded":
       return {
         label: "已完成",
-        badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
+        textClass: "text-emerald-600",
       }
     case "failed":
       return {
         label: "生成失败",
-        badgeClass: "border-rose-200 bg-rose-50 text-rose-700",
+        textClass: "text-rose-600",
       }
     case "running":
       return {
         label: "生成中",
-        badgeClass: "border-amber-200 bg-amber-50 text-amber-700",
+        textClass: "text-amber-600",
       }
     default:
       return {
         label: "等待中",
-        badgeClass: "border-amber-200 bg-amber-50 text-amber-700",
+        textClass: "text-slate-500",
       }
   }
 }
@@ -1534,7 +1534,7 @@ export default function ScriptWorkshopPage() {
             onAuthAction={handleLogout}
             items={[
               { key: "workspace", label: "工作台", icon: Wand2, onClick: () => setSearchParams({ view: "workspace" }) },
-              { key: "history", label: "列表", icon: History, onClick: () => setSearchParams({ view: "history" }) },
+              { key: "history", label: "作品", icon: History, onClick: () => setSearchParams({ view: "history" }) },
               {
                 key: "detail",
                 label: "详情",
@@ -1815,106 +1815,122 @@ export default function ScriptWorkshopPage() {
 
             {sidebarView === "history" ? (
               <div className="mx-auto max-w-[1040px] space-y-6">
-                <StudioPanel
-                  eyebrow="History"
-                  title="生成列表"
-                  description="在这里查看全部生成记录，点击任一项进入详情。"
-                  actions={
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void loadHistory()}
-                      className="text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                    </Button>
-                  }
-                  className="rounded-[30px] border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]"
-                >
-                  <div className="space-y-4">
-                    <div className="flex flex-col gap-3 md:flex-row">
-                      <Input
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                        placeholder="搜索剧本标题"
-                        className="h-11 flex-1 border-black/8 bg-slate-50 text-slate-900 placeholder:text-slate-400"
-                      />
-                      <div ref={statusMenuRef} className="relative shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setIsStatusMenuOpen((open) => !open)}
-                          className="flex h-11 min-w-[148px] items-center justify-between gap-3 rounded-2xl border border-black/8 bg-white px-4 text-sm text-slate-600 transition-colors hover:bg-slate-50"
-                        >
-                          <span className="inline-flex items-center gap-2">
-                            <ListFilter className="h-4 w-4 text-slate-400" />
-                            {statusFilterLabel}
-                          </span>
-                          <ChevronDown
-                            className={cn(
-                              "h-4 w-4 text-slate-400 transition-transform",
-                              isStatusMenuOpen && "rotate-180"
-                            )}
-                          />
-                        </button>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-[0.22em] text-slate-400">
+                      Works
+                    </p>
+                    <h2 className="mt-2 text-[28px] font-semibold tracking-tight text-slate-950">
+                      作品
+                    </h2>
+                    <p className="mt-2 text-sm text-slate-500">
+                      像作品墙一样浏览全部结果，点击任一张卡片进入详情。
+                    </p>
+                  </div>
+                </div>
 
-                        {isStatusMenuOpen ? (
-                          <div className="absolute right-0 top-[calc(100%+10px)] z-20 w-56 rounded-[22px] border border-black/6 bg-white/95 p-2 shadow-[0_18px_50px_rgba(15,23,42,0.1)] backdrop-blur-xl">
-                            <div className="flex items-center justify-between px-2 py-1.5">
-                              <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-                                状态筛选
+                <div className="space-y-4">
+                  <div className="sticky top-4 z-10">
+                    <div className="rounded-xl border border-black/6 bg-white/76 p-3 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+
+                      <div className="flex flex-col gap-3 md:flex-row">
+                        <Input
+                          value={search}
+                          onChange={(event) => setSearch(event.target.value)}
+                          placeholder="搜索剧本标题"
+                          className="h-11 flex-1 border-black/8 bg-slate-50 text-slate-900 placeholder:text-slate-400"
+                        />
+                        <div className="flex shrink-0 items-center gap-3">
+                          <div ref={statusMenuRef} className="relative shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setIsStatusMenuOpen((open) => !open)}
+                              className="flex h-11 min-w-[148px] items-center justify-between gap-3 rounded-lg border border-black/8 bg-white px-4 text-sm text-slate-600 transition-colors hover:bg-slate-50"
+                            >
+                              <span className="inline-flex items-center gap-2">
+                                <ListFilter className="h-4 w-4 text-slate-400" />
+                                {statusFilterLabel}
                               </span>
-                              {statusFilters.length > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setStatusFilters([])}
-                                  className="text-xs text-slate-400 transition-colors hover:text-slate-900"
-                                >
-                                  清空
-                                </button>
-                              ) : null}
-                            </div>
+                              <ChevronDown
+                                className={cn(
+                                  "h-4 w-4 text-slate-400 transition-transform",
+                                  isStatusMenuOpen && "rotate-180"
+                                )}
+                              />
+                            </button>
 
-                            <div className="space-y-1">
-                              {STATUS_FILTER_OPTIONS.map((item) => {
-                                const checked = statusFilters.includes(item.value)
-                                return (
-                                  <button
-                                    key={item.value}
-                                    type="button"
-                                    onClick={() => toggleStatusFilter(item.value)}
-                                    className="flex w-full items-center justify-between rounded-2xl px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-950"
-                                  >
-                                    <span>{item.label}</span>
-                                    <span
-                                      className={cn(
-                                        "flex h-5 w-5 items-center justify-center rounded-md border transition-colors",
-                                        checked
-                                          ? "border-slate-900 bg-slate-900 text-white"
-                                          : "border-black/8 bg-white text-transparent"
-                                      )}
+                            {isStatusMenuOpen ? (
+                              <div className="absolute right-0 top-[calc(100%+10px)] z-20 w-56 rounded-xl border border-black/6 bg-white/95 p-2 shadow-[0_18px_50px_rgba(15,23,42,0.1)] backdrop-blur-xl">
+                                <div className="flex items-center justify-between px-2 py-1.5">
+                                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+                                    状态筛选
+                                  </span>
+                                  {statusFilters.length > 0 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setStatusFilters([])}
+                                      className="text-xs text-slate-400 transition-colors hover:text-slate-900"
                                     >
-                                      <Check className="h-3.5 w-3.5" />
-                                    </span>
-                                  </button>
-                                )
-                              })}
-                            </div>
+                                      清空
+                                    </button>
+                                  ) : null}
+                                </div>
+
+                                <div className="space-y-1">
+                                  {STATUS_FILTER_OPTIONS.map((item) => {
+                                    const checked = statusFilters.includes(item.value)
+                                    return (
+                                      <button
+                                        key={item.value}
+                                        type="button"
+                                        onClick={() => toggleStatusFilter(item.value)}
+                                        className="flex w-full items-center justify-between rounded-2xl px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-950"
+                                      >
+                                        <span>{item.label}</span>
+                                        <span
+                                          className={cn(
+                                            "flex h-5 w-5 items-center justify-center rounded-md border transition-colors",
+                                            checked
+                                              ? "border-slate-900 bg-slate-900 text-white"
+                                              : "border-black/8 bg-white text-transparent"
+                                          )}
+                                        >
+                                          <Check className="h-3.5 w-3.5" />
+                                        </span>
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
-                        ) : null}
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void loadHistory()}
+                            className="h-11 rounded-lg border border-black/8 bg-white px-4 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
+                  </div>
 
-                    <div className="space-y-3">
-                      {isHistoryLoading ? (
-                        <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-10 text-center text-sm text-slate-400">
-                          正在加载生成列表...
-                        </div>
-                      ) : filteredHistory.length === 0 ? (
-                        <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-10 text-center text-sm text-slate-400">
-                          还没有生成记录。
-                        </div>
-                      ) : (
-                        filteredHistory.map((item) => {
+                  <div className="space-y-3">
+                    {isHistoryLoading ? (
+                      <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-10 text-center text-sm text-slate-400">
+                        正在加载作品...
+                      </div>
+                    ) : filteredHistory.length === 0 ? (
+                      <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-10 text-center text-sm text-slate-400">
+                        还没有作品。
+                      </div>
+                    ) : (
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                        {filteredHistory.map((item) => {
                           const meta = getStatusMeta(item.status)
                           return (
                             <button
@@ -1922,44 +1938,64 @@ export default function ScriptWorkshopPage() {
                               type="button"
                               onClick={() => void handleLoadHistory(item)}
                               className={cn(
-                                "w-full rounded-[24px] border px-5 py-4 text-left transition-colors",
+                                "w-full rounded-[24px] border px-5 py-5 text-left transition-all",
+                                "flex min-h-[220px] flex-col justify-between shadow-[0_14px_40px_rgba(15,23,42,0.04)]",
                                 selectedTaskId === item.id
                                   ? "border-slate-200 bg-slate-50"
-                                  : "border-black/6 bg-white hover:bg-slate-50"
+                                  : "border-black/6 bg-white hover:-translate-y-0.5 hover:shadow-[0_18px_42px_rgba(15,23,42,0.08)]"
                               )}
                             >
-                              <div className="flex items-start justify-between gap-4">
-                                <div>
-                                  <p className="text-base font-medium text-slate-900">
-                                    {item.title}
-                                  </p>
-                                  <p className="mt-1 text-sm text-slate-400">
-                                    {item.genre} / {item.tone} / {item.pacing}
-                                  </p>
+                              <div>
+                                <div className="flex items-start justify-between gap-4">
+                                  <div>
+                                    <p className="text-base font-medium text-slate-900">
+                                      {item.title}
+                                    </p>
+                                    <p className="mt-1 text-sm text-slate-400">
+                                      {item.genre} / {item.tone} / {item.pacing}
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={cn(
+                                      "text-xs font-medium",
+                                      meta.textClass
+                                    )}
+                                  >
+                                    {meta.label}
+                                  </span>
                                 </div>
-                                <span
-                                  className={cn(
-                                    "rounded-full border px-3 py-1 text-xs font-medium",
-                                    meta.badgeClass
-                                  )}
-                                >
-                                  {meta.label}
-                                </span>
+                                {item.err_msg ? (
+                                  <div className="mt-4 rounded-[18px] border border-rose-100 bg-rose-50/80 px-3 py-3 text-xs leading-6 text-rose-700">
+                                    {item.err_msg}
+                                  </div>
+                                ) : (
+                                  <div className="mt-4 rounded-[18px] bg-slate-50 px-3 py-3">
+                                    <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                                      当前状态
+                                    </p>
+                                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                                      {item.status === "succeeded"
+                                        ? "第一版剧本已生成完成，可以继续审阅结构或进入详情编辑。"
+                                        : item.status === "failed"
+                                          ? "任务已结束但生成未完成，可以点开查看原因并重新生成。"
+                                          : item.status === "running"
+                                            ? "后台正在生成中，点击后可查看实时进度状态。"
+                                            : "任务已进入队列，等待后台开始处理。"}
+                                    </p>
+                                  </div>
+                                )}
                               </div>
-                              <div className="mt-4 flex items-center justify-between text-xs text-slate-400">
+                              <div className="mt-5 flex items-center justify-between text-xs text-slate-400">
                                 <span>{formatDateTime(item.updated_at)}</span>
                                 <span>{item.source_chapters} 章输入</span>
                               </div>
-                              {item.err_msg ? (
-                                <p className="mt-3 text-xs text-rose-600">{item.err_msg}</p>
-                              ) : null}
                             </button>
                           )
-                        })
-                      )}
-                    </div>
+                        })}
+                      </div>
+                    )}
                   </div>
-                </StudioPanel>
+                </div>
               </div>
             ) : null}
 
@@ -1972,7 +2008,7 @@ export default function ScriptWorkshopPage() {
                     description={
                       activeTaskMeta
                         ? "任务状态会实时同步，完成后会自动载入最终 YAML 与结构结果。"
-                        : "先在工作台生成剧本，或从生成列表中点开一个历史结果。"
+                        : "先在工作台生成剧本，或从作品中点开一个历史结果。"
                     }
                     className="rounded-[30px] border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]"
                   >
@@ -2014,7 +2050,7 @@ export default function ScriptWorkshopPage() {
                       <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-16 text-center">
                         <p className="text-lg font-medium text-slate-800">还没有可展示的详情</p>
                         <p className="mt-2 text-sm text-slate-400">
-                          你可以前往工作台生成，或者打开左侧“列表”选择一个已生成结果。
+                          你可以前往工作台生成，或者打开左侧“作品”选择一个已生成结果。
                         </p>
                       </div>
                     )}
