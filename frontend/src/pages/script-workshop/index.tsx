@@ -729,6 +729,7 @@ export default function ScriptWorkshopPage() {
   const [importedChapters, setImportedChapters] = useState<ImportedChapterDraft[]>([])
   const [activeImportedChapterIndex, setActiveImportedChapterIndex] = useState(0)
   const statusMenuRef = useRef<HTMLDivElement | null>(null)
+  const importFileInputRef = useRef<HTMLInputElement | null>(null)
   const characterRenameOriginRef = useRef<Record<number, string>>({})
   const settingRenameOriginRef = useRef<Record<number, string>>({})
   const taskEventSourceRef = useRef<{ taskId: string; source: EventSource } | null>(null)
@@ -1359,6 +1360,34 @@ export default function ScriptWorkshopPage() {
     if (chapters.length < 2) {
       toast.error("未识别到明确章节标题，已按段落结构给出拆分初稿，请确认后再导入。")
       return
+    }
+  }
+
+  async function handleImportTextFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) {
+      return
+    }
+
+    const lowerName = file.name.toLowerCase()
+    const isSupported =
+      lowerName.endsWith(".txt") || lowerName.endsWith(".md") || lowerName.endsWith(".markdown")
+
+    if (!isSupported) {
+      toast.error("目前只支持导入 .txt、.md、.markdown 文件。")
+      return
+    }
+
+    try {
+      const content = await file.text()
+      setImportSourceText(content)
+      setImportedChapters([])
+      setActiveImportedChapterIndex(0)
+      setWorkspaceInputMode("import")
+      toast.success(`已导入文件《${file.name}》，现在可以开始自动拆章。`)
+    } catch {
+      toast.error("文件读取失败，请确认文件编码和内容后重试。")
     }
   }
 
@@ -2018,21 +2047,39 @@ export default function ScriptWorkshopPage() {
                                         全文粘贴
                                       </p>
                                     </div>
-                                    <Button
-                                      type="button"
-                                      onClick={handleParseImportedText}
-                                      className="h-10 rounded-2xl bg-slate-900 px-4 text-white hover:bg-slate-800"
-                                    >
-                                      <Check className="mr-2 h-4 w-4" />
-                                      自动拆章
-                                    </Button>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <input
+                                        ref={importFileInputRef}
+                                        type="file"
+                                        accept=".txt,.md,.markdown,text/plain,text/markdown"
+                                        className="hidden"
+                                        onChange={handleImportTextFile}
+                                      />
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={() => importFileInputRef.current?.click()}
+                                        className="h-10 rounded-2xl border-black/8 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-950"
+                                      >
+                                        <FileUp className="mr-2 h-4 w-4" />
+                                        上传文件
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        onClick={handleParseImportedText}
+                                        className="h-10 rounded-2xl bg-slate-900 px-4 text-white hover:bg-slate-800"
+                                      >
+                                        <Check className="mr-2 h-4 w-4" />
+                                        自动拆章
+                                      </Button>
+                                    </div>
                                   </div>
                                   <textarea
                                     value={importSourceText}
                                     onChange={(event) => {
                                       setImportSourceText(event.target.value)
                                     }}
-                                    placeholder="把整篇小说正文粘贴到这里。建议保留原始章节标题，自动拆章会更准确。"
+                                    placeholder="把整篇小说正文粘贴到这里，或上传 .txt / .md 文件。建议保留原始章节标题，自动拆章会更准确。"
                                     className="mt-4 h-56 w-full resize-none rounded-[24px] border border-black/8 bg-slate-50/70 px-5 py-5 text-[15px] leading-8 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
                                   />
                                 </div>
