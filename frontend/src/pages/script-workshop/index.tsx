@@ -83,6 +83,7 @@ type WorkshopResult = {
 type ResultView = "overview" | "yaml" | "structure"
 type SidebarView = "workspace" | "history" | "detail"
 type ScriptTaskStatus = "pending" | "running" | "succeeded" | "failed"
+type RegistryTab = "characters" | "settings"
 
 const DRAFT_STORAGE_KEY = "script-workshop-draft"
 
@@ -568,6 +569,9 @@ export default function ScriptWorkshopPage() {
   const [generationStepIndex, setGenerationStepIndex] = useState(0)
   const [draggedBeatId, setDraggedBeatId] = useState<string | null>(null)
   const [dragOverBeatId, setDragOverBeatId] = useState<string | null>(null)
+  const [registryTab, setRegistryTab] = useState<RegistryTab>("characters")
+  const [selectedCharacterIndex, setSelectedCharacterIndex] = useState(0)
+  const [selectedSettingIndex, setSelectedSettingIndex] = useState(0)
   const statusMenuRef = useRef<HTMLDivElement | null>(null)
   const characterRenameOriginRef = useRef<Record<number, string>>({})
   const settingRenameOriginRef = useRef<Record<number, string>>({})
@@ -579,21 +583,6 @@ export default function ScriptWorkshopPage() {
   useEffect(() => {
     void loadHistory()
   }, [])
-
-  useEffect(() => {
-    const taskIdFromQuery = searchParams.get("id")
-    const viewFromQuery = searchParams.get("view")
-
-    if (viewFromQuery !== "detail" || !taskIdFromQuery) {
-      return
-    }
-
-    if (selectedTaskId === taskIdFromQuery && activeResult?.id === taskIdFromQuery) {
-      return
-    }
-
-    void loadDetailById(taskIdFromQuery)
-  }, [searchParams, selectedTaskId, activeResult?.id])
 
   useEffect(() => {
     if (!isSubmitting) return
@@ -669,6 +658,25 @@ export default function ScriptWorkshopPage() {
     }
   }, [setSearchParams])
 
+  useEffect(() => {
+    const taskIdFromQuery = searchParams.get("id")
+    const viewFromQuery = searchParams.get("view")
+
+    if (viewFromQuery !== "detail" || !taskIdFromQuery) {
+      return
+    }
+
+    if (selectedTaskId === taskIdFromQuery && activeResult?.id === taskIdFromQuery) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void loadDetailById(taskIdFromQuery)
+    }, 0)
+
+    return () => window.clearTimeout(timer)
+  }, [searchParams, selectedTaskId, activeResult?.id, loadDetailById])
+
   async function handleLogout() {
     try {
       const accessToken = getAccessToken()
@@ -721,6 +729,9 @@ export default function ScriptWorkshopPage() {
   function setResultForEditing(result: WorkshopResult | null) {
     setActiveResult(result)
     setEditableDocument(result ? parseScriptYaml(result.yaml) : null)
+    setRegistryTab("characters")
+    setSelectedCharacterIndex(0)
+    setSelectedSettingIndex(0)
   }
 
   function updateScriptChapter(
@@ -892,6 +903,7 @@ export default function ScriptWorkshopPage() {
   }
 
   function addCharacter() {
+    const nextIndex = editableDocument?.dramatis_personae.length ?? 0
     applyDocumentUpdate((current) => ({
       ...current,
       dramatis_personae: [
@@ -906,9 +918,12 @@ export default function ScriptWorkshopPage() {
         },
       ],
     }))
+    setRegistryTab("characters")
+    setSelectedCharacterIndex(nextIndex)
   }
 
   function addSetting() {
+    const nextIndex = editableDocument?.settings.length ?? 0
     applyDocumentUpdate((current) => ({
       ...current,
       settings: [
@@ -920,6 +935,8 @@ export default function ScriptWorkshopPage() {
         },
       ],
     }))
+    setRegistryTab("settings")
+    setSelectedSettingIndex(nextIndex)
   }
 
   async function handleSubmit(
@@ -1103,6 +1120,32 @@ export default function ScriptWorkshopPage() {
     selectedNode?.beatIndex !== undefined && selectedSceneData
       ? selectedSceneData.beats[selectedNode.beatIndex] ?? null
       : null
+  const registryView: RegistryTab =
+    registryTab === "characters"
+      ? editableDocument?.dramatis_personae.length === 0 && (editableDocument?.settings.length ?? 0) > 0
+        ? "settings"
+        : "characters"
+      : editableDocument?.settings.length === 0 && (editableDocument?.dramatis_personae.length ?? 0) > 0
+        ? "characters"
+        : "settings"
+  const activeRegistryItems =
+    registryView === "characters"
+      ? editableDocument?.dramatis_personae ?? []
+      : editableDocument?.settings ?? []
+  const activeRegistryIndex =
+    registryView === "characters"
+      ? activeRegistryItems.length === 0
+        ? 0
+        : Math.min(selectedCharacterIndex, activeRegistryItems.length - 1)
+      : activeRegistryItems.length === 0
+        ? 0
+        : Math.min(selectedSettingIndex, activeRegistryItems.length - 1)
+  const selectedCharacter =
+    registryView === "characters"
+      ? editableDocument?.dramatis_personae[activeRegistryIndex] ?? null
+      : null
+  const selectedSetting =
+    registryView === "settings" ? editableDocument?.settings[activeRegistryIndex] ?? null : null
   const characterNames = editableDocument?.dramatis_personae.map((item) => item.name).filter(Boolean) ?? []
   const settingNames = editableDocument?.settings.map((item) => item.name).filter(Boolean) ?? []
   const currentPovOptions = selectedSceneData?.pov && !characterNames.includes(selectedSceneData.pov)
@@ -2123,171 +2166,269 @@ export default function ScriptWorkshopPage() {
                           当前结果暂时无法编辑人物表和地点表。
                         </div>
                       ) : (
-                        <div className="grid gap-5 xl:grid-cols-2">
-                          <div className="space-y-4 rounded-[24px] border border-black/6 bg-slate-50 p-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <div>
-                                <p className="text-sm font-medium text-slate-900">人物表</p>
-                                <p className="mt-1 text-xs text-slate-400">
-                                  角色名修改后会自动同步场景视角和对白说话人。
-                                </p>
-                              </div>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={addCharacter}
-                                className="border-black/8 bg-white text-slate-700 hover:bg-slate-50"
-                              >
-                                新增角色
-                              </Button>
-                            </div>
-
-                            <div className="space-y-3">
-                              {editableDocument.dramatis_personae.map((character, index) => (
-                                <div
-                                  key={`character-${index}`}
-                                  className="space-y-3 rounded-[20px] border border-black/6 bg-white p-4"
+                        <div className="space-y-5">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 rounded-full border border-black/6 bg-slate-50 p-1">
+                              {([
+                                {
+                                  key: "characters",
+                                  label: "人物",
+                                  count: editableDocument.dramatis_personae.length,
+                                },
+                                {
+                                  key: "settings",
+                                  label: "地点",
+                                  count: editableDocument.settings.length,
+                                },
+                              ] as const).map((item) => (
+                                <button
+                                  key={item.key}
+                                  type="button"
+                                  onClick={() => setRegistryTab(item.key)}
+                                  className={cn(
+                                    "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors",
+                                    registryView === item.key
+                                      ? "bg-slate-900 text-white"
+                                      : "text-slate-500 hover:bg-white hover:text-slate-900"
+                                  )}
                                 >
-                                  <div className="grid gap-3 md:grid-cols-2">
-                                    <div className="space-y-2">
-                                      <Label className="text-slate-600">角色名</Label>
-                                      <Input
-                                        value={character.name}
-                                        onFocus={() => {
-                                          characterRenameOriginRef.current[index] = character.name
-                                        }}
-                                        onChange={(event) => {
-                                          const nextName = event.target.value
-                                          updateScriptCharacter(index, (item) => ({
-                                            ...item,
-                                            name: nextName,
-                                          }))
-                                        }}
-                                        onBlur={(event) => {
-                                          const previousName =
-                                            characterRenameOriginRef.current[index] ?? character.name
-                                          const nextName = event.target.value
-                                          renameCharacterReferences(previousName, nextName)
-                                          delete characterRenameOriginRef.current[index]
-                                        }}
-                                        placeholder="请输入角色名"
-                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
-                                      />
-                                    </div>
-                                    <div className="space-y-2">
-                                      <Label className="text-slate-600">角色类型</Label>
-                                      <Input
-                                        value={character.archetype}
-                                        onChange={(event) =>
-                                          updateScriptCharacter(index, (item) => ({
-                                            ...item,
-                                            archetype: event.target.value,
-                                          }))
-                                        }
-                                        placeholder="主角 / 配角 / 反派"
-                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="space-y-2">
-                                    <Label className="text-slate-600">动机</Label>
-                                    <textarea
-                                      value={character.motivation}
-                                      onChange={(event) =>
-                                        updateScriptCharacter(index, (item) => ({
-                                          ...item,
-                                          motivation: event.target.value,
-                                        }))
-                                      }
-                                      placeholder="写下角色核心行动动机"
-                                      className="min-h-[100px] w-full rounded-[20px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
-                                    />
-                                  </div>
-                                  <div className="grid gap-3 md:grid-cols-2">
-                                    <div className="space-y-2">
-                                      <Label className="text-slate-600">性格标签</Label>
-                                      <Input
-                                        value={character.traits.join("，")}
-                                        onChange={(event) =>
-                                          updateScriptCharacter(index, (item) => ({
-                                            ...item,
-                                            traits: event.target.value
-                                              .split(/[,，]/)
-                                              .map((value) => value.trim())
-                                              .filter(Boolean),
-                                          }))
-                                        }
-                                        placeholder="冷静，执着"
-                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
-                                      />
-                                    </div>
-                                    <div className="space-y-2">
-                                      <Label className="text-slate-600">首次出现</Label>
-                                      <Input
-                                        value={character.first_appearance}
-                                        onChange={(event) =>
-                                          updateScriptCharacter(index, (item) => ({
-                                            ...item,
-                                            first_appearance: event.target.value,
-                                          }))
-                                        }
-                                        placeholder="Chapter 1"
-                                        className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
+                                  <span>{item.label}</span>
+                                  <span
+                                    className={cn(
+                                      "rounded-full px-2 py-0.5 text-xs",
+                                      registryView === item.key
+                                        ? "bg-white/15 text-white"
+                                        : "bg-white text-slate-400"
+                                    )}
+                                  >
+                                    {item.count}
+                                  </span>
+                                </button>
                               ))}
                             </div>
+
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={registryView === "characters" ? addCharacter : addSetting}
+                              className="border-black/8 bg-white text-slate-700 hover:bg-slate-50"
+                            >
+                              {registryView === "characters" ? "新增角色" : "新增地点"}
+                            </Button>
                           </div>
 
-                          <div className="space-y-4 rounded-[24px] border border-black/6 bg-slate-50 p-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <div>
-                                <p className="text-sm font-medium text-slate-900">地点表</p>
-                                <p className="mt-1 text-xs text-slate-400">
-                                  地点名修改后会自动同步所有场景的 `location` 引用。
-                                </p>
+                          <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+                            <div className="rounded-[24px] border border-black/6 bg-slate-50 p-3">
+                              <div className="max-h-[560px] space-y-2 overflow-y-auto">
+                                {registryView === "characters"
+                                  ? editableDocument.dramatis_personae.map((character, index) => (
+                                      <button
+                                        key={`character-item-${index}`}
+                                        type="button"
+                                        onClick={() => setSelectedCharacterIndex(index)}
+                                        className={cn(
+                                          "w-full rounded-[20px] border px-4 py-4 text-left transition-colors",
+                                          activeRegistryIndex === index
+                                            ? "border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.06)]"
+                                            : "border-transparent bg-transparent hover:border-black/6 hover:bg-white/80"
+                                        )}
+                                      >
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                            <p className="truncate text-sm font-medium text-slate-900">
+                                              {character.name || `角色 ${index + 1}`}
+                                            </p>
+                                            <p className="mt-1 text-xs text-slate-400">
+                                              {character.archetype || "未设置角色类型"}
+                                            </p>
+                                          </div>
+                                          <span className="rounded-full border border-black/6 bg-slate-50 px-2 py-0.5 text-xs text-slate-500">
+                                            {character.first_appearance || "待补充"}
+                                          </span>
+                                        </div>
+                                        <p className="mt-3 line-clamp-2 text-xs leading-6 text-slate-500">
+                                          {character.motivation || "还没有填写角色动机。"}
+                                        </p>
+                                      </button>
+                                    ))
+                                  : editableDocument.settings.map((setting, index) => (
+                                      <button
+                                        key={`setting-item-${index}`}
+                                        type="button"
+                                        onClick={() => setSelectedSettingIndex(index)}
+                                        className={cn(
+                                          "w-full rounded-[20px] border px-4 py-4 text-left transition-colors",
+                                          activeRegistryIndex === index
+                                            ? "border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.06)]"
+                                            : "border-transparent bg-transparent hover:border-black/6 hover:bg-white/80"
+                                        )}
+                                      >
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                            <p className="truncate text-sm font-medium text-slate-900">
+                                              {setting.name || `地点 ${index + 1}`}
+                                            </p>
+                                            <p className="mt-1 text-xs text-slate-400">
+                                              {setting.description || "还没有填写地点描述。"}
+                                            </p>
+                                          </div>
+                                          <span className="rounded-full border border-black/6 bg-slate-50 px-2 py-0.5 text-xs text-slate-500">
+                                            {setting.importance}
+                                          </span>
+                                        </div>
+                                      </button>
+                                    ))}
                               </div>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={addSetting}
-                                className="border-black/8 bg-white text-slate-700 hover:bg-slate-50"
-                              >
-                                新增地点
-                              </Button>
                             </div>
 
-                            <div className="space-y-3">
-                              {editableDocument.settings.map((setting, index) => (
-                                <div
-                                  key={`setting-${index}`}
-                                  className="space-y-3 rounded-[20px] border border-black/6 bg-white p-4"
-                                >
-                                  <div className="grid gap-3 md:grid-cols-2">
+                            <div className="rounded-[24px] border border-black/6 bg-slate-50 p-5">
+                              {registryView === "characters" ? (
+                                selectedCharacter ? (
+                                  <div className="space-y-5">
+                                    <div className="rounded-[20px] bg-white px-4 py-4">
+                                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                        人物编辑
+                                      </p>
+                                      <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                                        {selectedCharacter.name || `角色 ${activeRegistryIndex + 1}`}
+                                      </h3>
+                                      <p className="mt-2 text-sm leading-6 text-slate-500">
+                                        这里维护角色注册表，改名后会同步视角角色、对白说话人和命中的正文文本。
+                                      </p>
+                                    </div>
+
+                                    <div className="grid gap-4 md:grid-cols-2">
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">角色名</Label>
+                                        <Input
+                                          value={selectedCharacter.name}
+                                          onFocus={() => {
+                                            characterRenameOriginRef.current[activeRegistryIndex] =
+                                              selectedCharacter.name
+                                          }}
+                                          onChange={(event) =>
+                                            updateScriptCharacter(activeRegistryIndex, (item) => ({
+                                              ...item,
+                                              name: event.target.value,
+                                            }))
+                                          }
+                                          onBlur={(event) => {
+                                            const previousName =
+                                              characterRenameOriginRef.current[activeRegistryIndex] ??
+                                              selectedCharacter.name
+                                            renameCharacterReferences(previousName, event.target.value)
+                                            delete characterRenameOriginRef.current[activeRegistryIndex]
+                                          }}
+                                          placeholder="请输入角色名"
+                                          className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">角色类型</Label>
+                                        <Input
+                                          value={selectedCharacter.archetype}
+                                          onChange={(event) =>
+                                            updateScriptCharacter(activeRegistryIndex, (item) => ({
+                                              ...item,
+                                              archetype: event.target.value,
+                                            }))
+                                          }
+                                          placeholder="主角 / 配角 / 反派"
+                                          className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                        />
+                                      </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                      <Label className="text-slate-600">动机</Label>
+                                      <textarea
+                                        value={selectedCharacter.motivation}
+                                        onChange={(event) =>
+                                          updateScriptCharacter(activeRegistryIndex, (item) => ({
+                                            ...item,
+                                            motivation: event.target.value,
+                                          }))
+                                        }
+                                        placeholder="写下角色核心行动动机"
+                                        className="min-h-[120px] w-full rounded-[24px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                      />
+                                    </div>
+
+                                    <div className="grid gap-4 md:grid-cols-2">
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">性格标签</Label>
+                                        <Input
+                                          value={selectedCharacter.traits.join("，")}
+                                          onChange={(event) =>
+                                            updateScriptCharacter(activeRegistryIndex, (item) => ({
+                                              ...item,
+                                              traits: event.target.value
+                                                .split(/[,，]/)
+                                                .map((value) => value.trim())
+                                                .filter(Boolean),
+                                            }))
+                                          }
+                                          placeholder="冷静，执着"
+                                          className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-slate-600">首次出现</Label>
+                                        <Input
+                                          value={selectedCharacter.first_appearance}
+                                          onChange={(event) =>
+                                            updateScriptCharacter(activeRegistryIndex, (item) => ({
+                                              ...item,
+                                              first_appearance: event.target.value,
+                                            }))
+                                          }
+                                          placeholder="Chapter 1"
+                                          className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="rounded-[20px] border border-dashed border-black/8 bg-white px-4 py-12 text-center text-sm text-slate-400">
+                                    当前还没有角色，点击左上角“新增角色”开始维护。
+                                  </div>
+                                )
+                              ) : selectedSetting ? (
+                                <div className="space-y-5">
+                                  <div className="rounded-[20px] bg-white px-4 py-4">
+                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                                      地点编辑
+                                    </p>
+                                    <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                                      {selectedSetting.name || `地点 ${activeRegistryIndex + 1}`}
+                                    </h3>
+                                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                                      这里维护地点注册表，改名后会同步所有场景的地点引用和命中的正文文本。
+                                    </p>
+                                  </div>
+
+                                  <div className="grid gap-4 md:grid-cols-2">
                                     <div className="space-y-2">
                                       <Label className="text-slate-600">地点名</Label>
                                       <Input
-                                        value={setting.name}
+                                        value={selectedSetting.name}
                                         onFocus={() => {
-                                          settingRenameOriginRef.current[index] = setting.name
+                                          settingRenameOriginRef.current[activeRegistryIndex] =
+                                            selectedSetting.name
                                         }}
-                                        onChange={(event) => {
-                                          const nextName = event.target.value
-                                          updateScriptSetting(index, (item) => ({
+                                        onChange={(event) =>
+                                          updateScriptSetting(activeRegistryIndex, (item) => ({
                                             ...item,
-                                            name: nextName,
+                                            name: event.target.value,
                                           }))
-                                        }}
+                                        }
                                         onBlur={(event) => {
                                           const previousName =
-                                            settingRenameOriginRef.current[index] ?? setting.name
-                                          const nextName = event.target.value
-                                          renameSettingReferences(previousName, nextName)
-                                          delete settingRenameOriginRef.current[index]
+                                            settingRenameOriginRef.current[activeRegistryIndex] ??
+                                            selectedSetting.name
+                                          renameSettingReferences(previousName, event.target.value)
+                                          delete settingRenameOriginRef.current[activeRegistryIndex]
                                         }}
                                         placeholder="请输入地点名"
                                         className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
@@ -2296,9 +2437,9 @@ export default function ScriptWorkshopPage() {
                                     <div className="space-y-2">
                                       <Label className="text-slate-600">重要程度</Label>
                                       <select
-                                        value={setting.importance}
+                                        value={selectedSetting.importance}
                                         onChange={(event) =>
-                                          updateScriptSetting(index, (item) => ({
+                                          updateScriptSetting(activeRegistryIndex, (item) => ({
                                             ...item,
                                             importance: event.target.value,
                                           }))
@@ -2311,22 +2452,27 @@ export default function ScriptWorkshopPage() {
                                       </select>
                                     </div>
                                   </div>
+
                                   <div className="space-y-2">
                                     <Label className="text-slate-600">地点描述</Label>
                                     <textarea
-                                      value={setting.description}
+                                      value={selectedSetting.description}
                                       onChange={(event) =>
-                                        updateScriptSetting(index, (item) => ({
+                                        updateScriptSetting(activeRegistryIndex, (item) => ({
                                           ...item,
                                           description: event.target.value,
                                         }))
                                       }
                                       placeholder="描述环境、氛围和重要细节"
-                                      className="min-h-[120px] w-full rounded-[20px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                      className="min-h-[180px] w-full rounded-[24px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
                                     />
                                   </div>
                                 </div>
-                              ))}
+                              ) : (
+                                <div className="rounded-[20px] border border-dashed border-black/8 bg-white px-4 py-12 text-center text-sm text-slate-400">
+                                  当前还没有地点，点击左上角“新增地点”开始维护。
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
