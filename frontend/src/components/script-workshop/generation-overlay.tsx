@@ -1,4 +1,5 @@
 import { LoaderCircle, Wand2 } from "lucide-react"
+import { formatScriptStyleSummary, getPacingLabel } from "@/lib/script-display"
 
 type GenerationOverlayProps = {
   stepText: string
@@ -43,8 +44,8 @@ export function GenerationOverlay({
           <div className="mt-6 grid w-full gap-3 sm:grid-cols-3">
             {[
               { label: "章节", value: `${chapterCount} 章` },
-              { label: "风格", value: genre },
-              { label: "语气 / 节奏", value: `${tone} / ${pacing}` },
+              { label: "风格", value: formatScriptStyleSummary(genre, tone, pacing) },
+              { label: "节奏", value: getPacingLabel(pacing) },
             ].map((item) => (
               <div
                 key={item.label}

@@ -34,6 +34,7 @@ import {
   parseScriptYaml,
   serializeScriptYaml,
 } from "@/lib/script-yaml"
+import { formatScriptStyleSummary, getPacingLabel } from "@/lib/script-display"
 import { cn } from "@/lib/utils"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
 import { toast } from "sonner"
@@ -259,6 +260,83 @@ function getStatusMeta(status: string) {
         textClass: "text-slate-500",
       }
   }
+}
+
+function truncateText(value: string, maxLength: number) {
+  const trimmed = value.trim()
+  if (trimmed.length <= maxLength) {
+    return trimmed
+  }
+  return `${trimmed.slice(0, maxLength).trim()}...`
+}
+
+function getHistoryCardCopy(item: ScriptHistoryItem) {
+  if (item.status === "succeeded") {
+    return {
+      eyebrow: "继续打磨",
+      title: "第一版剧本已经生成完成",
+      body: "可以继续审阅结构、检查一致性，或直接进入详情编辑。",
+      toneClass: "bg-slate-50 text-slate-600",
+    }
+  }
+
+  if (item.status === "failed") {
+    return {
+      eyebrow: "需要处理",
+      title: "这次生成未能顺利完成",
+      body: item.err_msg
+        ? truncateText(formatSchemaValidationMessage(item.err_msg), 60)
+        : "可以打开详情查看失败原因，调整输入后重新生成。",
+      toneClass: "bg-rose-50/80 text-rose-700",
+    }
+  }
+
+  if (item.status === "running") {
+    return {
+      eyebrow: "后台处理中",
+      title: "AI 正在整理角色、场景与节拍",
+      body: "点击卡片即可查看实时进度状态，完成后会自动进入详情结果。",
+      toneClass: "bg-amber-50/80 text-amber-700",
+    }
+  }
+
+  return {
+    eyebrow: "已加入队列",
+    title: "任务正在等待后台开始执行",
+    body: "系统会在空闲 worker 可用后自动开始生成，无需停留在当前页面。",
+    toneClass: "bg-slate-50 text-slate-600",
+  }
+}
+
+function HistorySkeletonCard({ index }: { index: number }) {
+  return (
+    <div
+      className="animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both rounded-[24px] border border-black/6 bg-white px-5 py-5 shadow-[0_14px_40px_rgba(15,23,42,0.04)]"
+      style={{ animationDelay: `${index * 70}ms` }}
+    >
+      <div className="animate-pulse">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1 space-y-3">
+            <div className="h-6 w-32 rounded-full bg-slate-200" />
+            <div className="h-4 w-40 rounded-full bg-slate-100" />
+          </div>
+          <div className="h-4 w-12 rounded-full bg-slate-100" />
+        </div>
+        <div className="mt-4 rounded-[18px] bg-slate-50 px-3 py-3">
+          <div className="h-3 w-16 rounded-full bg-slate-200" />
+          <div className="mt-3 space-y-2">
+            <div className="h-4 w-10/12 rounded-full bg-slate-200" />
+            <div className="h-4 w-8/12 rounded-full bg-slate-100" />
+            <div className="h-4 w-9/12 rounded-full bg-slate-100" />
+          </div>
+        </div>
+        <div className="mt-8 flex items-center justify-between">
+          <div className="h-3 w-20 rounded-full bg-slate-100" />
+          <div className="h-3 w-14 rounded-full bg-slate-100" />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function downloadTextFile(filename: string, content: string) {
@@ -1921,8 +1999,10 @@ export default function ScriptWorkshopPage() {
 
                   <div className="space-y-3">
                     {isHistoryLoading ? (
-                      <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-10 text-center text-sm text-slate-400">
-                        正在加载作品...
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                        {Array.from({ length: 6 }).map((_, index) => (
+                          <HistorySkeletonCard key={index} index={index} />
+                        ))}
                       </div>
                     ) : filteredHistory.length === 0 ? (
                       <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-10 text-center text-sm text-slate-400">
@@ -1932,18 +2012,21 @@ export default function ScriptWorkshopPage() {
                       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                         {filteredHistory.map((item) => {
                           const meta = getStatusMeta(item.status)
+                          const cardCopy = getHistoryCardCopy(item)
                           return (
                             <button
                               key={item.id}
                               type="button"
                               onClick={() => void handleLoadHistory(item)}
                               className={cn(
-                                "w-full rounded-[24px] border px-5 py-5 text-left transition-all",
-                                "flex min-h-[220px] flex-col justify-between shadow-[0_14px_40px_rgba(15,23,42,0.04)]",
+                                "w-full rounded-[24px] border px-5 py-5 text-left outline-none transition-[transform,box-shadow,border-color]",
+                                "animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both",
+                                "flex min-h-[220px] flex-col justify-between shadow-[0_14px_40px_rgba(15,23,42,0.04)] focus-visible:border-sky-300 focus-visible:ring-3 focus-visible:ring-sky-100",
                                 selectedTaskId === item.id
-                                  ? "border-slate-200 bg-slate-50"
-                                  : "border-black/6 bg-white hover:-translate-y-0.5 hover:shadow-[0_18px_42px_rgba(15,23,42,0.08)]"
+                                  ? "border-slate-200 bg-slate-50 hover:border-sky-300 hover:-translate-y-0.5 hover:shadow-[0_18px_42px_rgba(15,23,42,0.08)]"
+                                  : "border-black/6 bg-white hover:border-sky-300 hover:-translate-y-0.5 hover:shadow-[0_18px_42px_rgba(15,23,42,0.08)]"
                               )}
+                              style={{ animationDelay: `${Math.min(filteredHistory.indexOf(item), 8) * 60}ms` }}
                             >
                               <div>
                                 <div className="flex items-start justify-between gap-4">
@@ -1952,7 +2035,7 @@ export default function ScriptWorkshopPage() {
                                       {item.title}
                                     </p>
                                     <p className="mt-1 text-sm text-slate-400">
-                                      {item.genre} / {item.tone} / {item.pacing}
+                                      {formatScriptStyleSummary(item.genre, item.tone, item.pacing)}
                                     </p>
                                   </div>
                                   <span
@@ -1964,26 +2047,17 @@ export default function ScriptWorkshopPage() {
                                     {meta.label}
                                   </span>
                                 </div>
-                                {item.err_msg ? (
-                                  <div className="mt-4 rounded-[18px] border border-rose-100 bg-rose-50/80 px-3 py-3 text-xs leading-6 text-rose-700">
-                                    {item.err_msg}
-                                  </div>
-                                ) : (
-                                  <div className="mt-4 rounded-[18px] bg-slate-50 px-3 py-3">
-                                    <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
-                                      当前状态
-                                    </p>
-                                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                                      {item.status === "succeeded"
-                                        ? "第一版剧本已生成完成，可以继续审阅结构或进入详情编辑。"
-                                        : item.status === "failed"
-                                          ? "任务已结束但生成未完成，可以点开查看原因并重新生成。"
-                                          : item.status === "running"
-                                            ? "后台正在生成中，点击后可查看实时进度状态。"
-                                            : "任务已进入队列，等待后台开始处理。"}
-                                    </p>
-                                  </div>
-                                )}
+                                <div className={cn("mt-4 rounded-[18px] px-3 py-3", cardCopy.toneClass)}>
+                                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                                    {cardCopy.eyebrow}
+                                  </p>
+                                  <p className="mt-2 text-sm font-medium leading-6 text-slate-800">
+                                    {cardCopy.title}
+                                  </p>
+                                  <p className="mt-1.5 text-sm leading-6">
+                                    {cardCopy.body}
+                                  </p>
+                                </div>
                               </div>
                               <div className="mt-5 flex items-center justify-between text-xs text-slate-400">
                                 <span>{formatDateTime(item.updated_at)}</span>
@@ -2019,7 +2093,7 @@ export default function ScriptWorkshopPage() {
                             { label: "状态", value: activeStatus.label },
                             { label: "体裁", value: activeTaskMeta.genre },
                             { label: "语气", value: activeTaskMeta.tone },
-                            { label: "节奏", value: activeTaskMeta.pacing },
+                            { label: "节奏", value: getPacingLabel(activeTaskMeta.pacing) },
                             { label: "章节", value: `${activeTaskMeta.source_chapters} 章` },
                           ].map((item) => (
                             <div
@@ -2089,7 +2163,7 @@ export default function ScriptWorkshopPage() {
                             <div className="rounded-[24px] border border-black/6 bg-slate-50 p-5">
                               <p className="text-xs text-slate-400">结果摘要</p>
                               <p className="mt-3 text-sm leading-7 text-slate-600">
-                                当前体裁为 {activeResult.metadata.genre}，语气为 {activeResult.metadata.tone}，节奏为 {activeResult.metadata.pacing}。本次结果基于 {activeResult.metadata.source_chapters} 章输入生成。
+                                当前风格为 {formatScriptStyleSummary(activeResult.metadata.genre, activeResult.metadata.tone, activeResult.metadata.pacing)}。本次结果基于 {activeResult.metadata.source_chapters} 章输入生成。
                               </p>
                               <p className="mt-4 text-sm text-slate-400">
                                 最近更新：{formatDateTime(activeResult.metadata.updated_at)}
