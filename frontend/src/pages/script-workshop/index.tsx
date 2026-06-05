@@ -126,6 +126,8 @@ const STATUS_FILTER_OPTIONS: Array<{ value: ScriptTaskStatus; label: string }> =
   { value: "pending", label: "等待中" },
 ]
 
+const WORKSPACE_DRAFT_FORM_ID = "script-workshop-draft-form"
+
 function buildSemanticTree(document: ScriptYamlDocument | null): ScriptTreeNode[] {
   if (!document) {
     return []
@@ -697,6 +699,7 @@ export default function ScriptWorkshopPage() {
   const [selectedSettingIndex, setSelectedSettingIndex] = useState(0)
   const [showValidationErrors, setShowValidationErrors] = useState(false)
   const [renameConfirm, setRenameConfirm] = useState<RenameConfirmState>(null)
+  const [floatingAction, setFloatingAction] = useState<"submit" | "reset" | null>(null)
   const statusMenuRef = useRef<HTMLDivElement | null>(null)
   const characterRenameOriginRef = useRef<Record<number, string>>({})
   const settingRenameOriginRef = useRef<Record<number, string>>({})
@@ -1303,6 +1306,12 @@ export default function ScriptWorkshopPage() {
     setSelectedSettingIndex(nextIndex)
   }
 
+  function handleResetDraft() {
+    setDraft(createDefaultDraft())
+    setActiveChapterIndex(0)
+    setFeedback("草稿已重置。")
+  }
+
   async function handleSubmit(
     event: Parameters<NonNullable<ComponentProps<"form">["onSubmit"]>>[0]
   ) {
@@ -1627,7 +1636,7 @@ export default function ScriptWorkshopPage() {
 
           <section className="space-y-6 pt-3">
             {sidebarView === "workspace" ? (
-              <div className="mx-auto max-w-[980px] space-y-6">
+              <div className="mx-auto max-w-[980px] space-y-6 pb-36">
                 <div className="text-center">
                   <p className="text-lg font-semibold text-slate-800">
                     使用这个开始创作：
@@ -1644,7 +1653,11 @@ export default function ScriptWorkshopPage() {
                   description="主输入区负责内容，右侧参数区负责改编风格，避免所有控件挤在同一层。"
                   className="overflow-hidden rounded-[34px] border-black/6 bg-white/92 shadow-[0_24px_80px_rgba(15,23,42,0.08)]"
                 >
-                  <form className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={handleSubmit}>
+                  <form
+                    id={WORKSPACE_DRAFT_FORM_ID}
+                    className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]"
+                    onSubmit={handleSubmit}
+                  >
                     <div className="space-y-5">
                       <div className="rounded-[28px] border border-black/6 bg-slate-50/80 p-4 sm:p-5">
                         <div className="flex flex-col gap-4 border-b border-black/6 pb-4">
@@ -1824,55 +1837,92 @@ export default function ScriptWorkshopPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-[28px] bg-slate-950 p-5 text-white shadow-[0_24px_60px_rgba(15,23,42,0.24)]">
-                        <p className="text-xs uppercase tracking-[0.22em] text-white/45">
-                          生成动作
-                        </p>
-                        <p className="mt-2 text-lg font-semibold">准备把这几章转成剧本</p>
-                        <p className="mt-2 text-sm leading-6 text-white/68">
-                          当前会基于 {draft.chapters.length} 章内容，按照「{draft.genre} / {draft.tone} /{" "}
-                          {draft.pacing === "fast"
-                            ? "快节奏"
-                            : draft.pacing === "medium"
-                              ? "中节奏"
-                              : "慢节奏"}
-                          」生成第一版结构化剧本。
-                        </p>
-                        <div className="mt-5 flex flex-col gap-3">
-                          <Button
-                            type="submit"
-                            disabled={isSubmitting}
-                            className="h-12 rounded-2xl bg-white text-slate-950 hover:bg-slate-100"
-                          >
-                            {isSubmitting ? (
-                              <>
-                                <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-                                生成中...
-                              </>
-                            ) : (
-                              <>
-                                <Wand2 className="mr-2 h-4 w-4" />
-                                开始生成
-                              </>
-                            )}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => {
-                              setDraft(createDefaultDraft())
-                              setActiveChapterIndex(0)
-                              setFeedback("草稿已重置。")
-                            }}
-                            className="h-11 rounded-2xl border-white/12 bg-white/6 text-white hover:bg-white/10 hover:text-white"
-                          >
-                            重置草稿
-                          </Button>
-                        </div>
-                      </div>
                     </div>
                   </form>
                 </StudioPanel>
+
+                <div className="pointer-events-none fixed inset-x-4 bottom-5 z-30 flex justify-end lg:right-6">
+                  <div className="pointer-events-auto flex flex-col items-end gap-3">
+                    <button
+                      type="submit"
+                      form={WORKSPACE_DRAFT_FORM_ID}
+                      disabled={isSubmitting}
+                      onMouseEnter={() => setFloatingAction("submit")}
+                      onMouseLeave={() => setFloatingAction((current) => (current === "submit" ? null : current))}
+                      onFocus={() => setFloatingAction("submit")}
+                      onBlur={() => setFloatingAction((current) => (current === "submit" ? null : current))}
+                      className={cn(
+                        "relative h-14 overflow-hidden rounded-full bg-slate-950 text-white shadow-[0_18px_48px_rgba(15,23,42,0.18)] transition-[width,transform,box-shadow] duration-300 ease-out disabled:pointer-events-none disabled:opacity-70",
+                        isSubmitting || floatingAction === "submit"
+                          ? "w-[190px]"
+                          : "w-14"
+                      )}
+                      aria-label="开始生成"
+                    >
+                      <span
+                        className={cn(
+                          "absolute top-1/2 flex h-14 w-14 -translate-y-1/2 items-center justify-center transition-[left,transform] duration-300 ease-out",
+                          isSubmitting || floatingAction === "submit"
+                            ? "left-5 translate-x-0"
+                            : "left-1/2 -translate-x-1/2"
+                        )}
+                      >
+                        {isSubmitting ? (
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Wand2 className="h-4 w-4" />
+                        )}
+                      </span>
+                      <span
+                        className={cn(
+                          "absolute left-14 top-1/2 -translate-y-1/2 overflow-hidden whitespace-nowrap pl-3 text-sm font-medium transition-[max-width,opacity,transform] duration-300 ease-out",
+                          isSubmitting || floatingAction === "submit"
+                            ? "max-w-[120px] translate-x-0 opacity-100"
+                            : "max-w-0 -translate-x-2 opacity-0"
+                        )}
+                      >
+                        {isSubmitting ? "生成中..." : "开始生成"}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleResetDraft}
+                      onMouseEnter={() => setFloatingAction("reset")}
+                      onMouseLeave={() => setFloatingAction((current) => (current === "reset" ? null : current))}
+                      onFocus={() => setFloatingAction("reset")}
+                      onBlur={() => setFloatingAction((current) => (current === "reset" ? null : current))}
+                      className={cn(
+                        "relative h-14 overflow-hidden rounded-full border border-black/8 bg-white/92 text-slate-600 shadow-[0_14px_36px_rgba(15,23,42,0.1)] transition-[width,transform,box-shadow,color,background-color] duration-300 ease-out hover:bg-white hover:text-slate-950",
+                        floatingAction === "reset"
+                          ? "w-[176px]"
+                          : "w-14"
+                      )}
+                      aria-label="重置草稿"
+                    >
+                      <span
+                        className={cn(
+                          "absolute top-1/2 flex h-14 w-14 -translate-y-1/2 items-center justify-center transition-[left,transform] duration-300 ease-out",
+                          floatingAction === "reset"
+                            ? "left-5 translate-x-0"
+                            : "left-1/2 -translate-x-1/2"
+                        )}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </span>
+                      <span
+                        className={cn(
+                          "absolute left-14 top-1/2 -translate-y-1/2 overflow-hidden whitespace-nowrap pl-3 text-sm font-medium transition-[max-width,opacity,transform] duration-300 ease-out",
+                          floatingAction === "reset"
+                            ? "max-w-[108px] translate-x-0 opacity-100"
+                            : "max-w-0 -translate-x-2 opacity-0"
+                        )}
+                      >
+                        重置草稿
+                      </span>
+                    </button>
+                  </div>
+                </div>
 
                 {(feedback || error) && (
                   <div className="space-y-3">
