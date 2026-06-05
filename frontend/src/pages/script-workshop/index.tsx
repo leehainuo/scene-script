@@ -42,6 +42,7 @@ import {
   getScriptDetail,
   getScriptHistory,
   logout,
+  openScriptEventStream,
   saveScriptResult,
 } from "@/services"
 import { useAuthStore } from "@/stores"
@@ -49,12 +50,12 @@ import type {
   ScriptBeat,
   ScriptChapter,
   ScriptChapterInput,
-  ScriptConsistencyReport,
   ScriptConvertRequest,
   ScriptDetailResponse,
   ScriptHistoryItem,
   ScriptScene,
   ScriptSummary,
+  ScriptTaskEvent,
   ScriptTaskMeta,
   ScriptYamlDocument,
 } from "@/types"
@@ -197,35 +198,6 @@ function createDefaultDraft(): ScriptConvertRequest {
   }
 }
 
-function makeResultFromConvert(
-  req: ScriptConvertRequest,
-  response: {
-    id: string
-    yaml: string
-    summary: ScriptSummary
-    consistency_report: ScriptConsistencyReport
-  }
-): WorkshopResult {
-  const now = new Date().toISOString()
-  return {
-    id: response.id,
-    yaml: response.yaml,
-    summary: response.summary,
-    consistencyReport: normalizeConsistency(response.consistency_report),
-    metadata: {
-      id: response.id,
-      title: req.chapters[0]?.title || "未命名剧本",
-      genre: req.genre,
-      tone: req.tone,
-      pacing: req.pacing,
-      source_chapters: req.chapters.length,
-      status: "succeeded",
-      created_at: now,
-      updated_at: now,
-    },
-  }
-}
-
 function makeResultFromDetail(detail: ScriptDetailResponse): WorkshopResult | null {
   if (!detail.yaml) return null
   return {
@@ -234,6 +206,33 @@ function makeResultFromDetail(detail: ScriptDetailResponse): WorkshopResult | nu
     summary: detail.summary,
     consistencyReport: normalizeConsistency(detail.consistency_report),
     metadata: detail.metadata,
+  }
+}
+
+function getGenerationStepText(stage?: string, message?: string) {
+  if (message) {
+    return message
+  }
+
+  switch (stage) {
+    case "queued":
+      return "任务已进入队列，等待后台执行。"
+    case "starting":
+      return "后台任务已启动，正在准备本次转换。"
+    case "generating":
+      return "正在调用大模型生成角色、场景与节拍结构。"
+    case "validating":
+      return "正在校验 YAML 结构并整理一致性质检。"
+    case "repairing":
+      return "首轮结果需要修复，正在自动重试。"
+    case "persisting":
+      return "结构校验通过，正在写入结果。"
+    case "completed":
+      return "第一版剧本已经生成完成。"
+    case "failed":
+      return "任务执行失败。"
+    default:
+      return GENERATION_STEPS[0]
   }
 }
 
@@ -603,12 +602,15 @@ export default function ScriptWorkshopPage() {
   const [history, setHistory] = useState<ScriptHistoryItem[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [activeResult, setActiveResult] = useState<WorkshopResult | null>(null)
+  const [activeTaskMeta, setActiveTaskMeta] = useState<ScriptTaskMeta | null>(null)
+  const [taskProgressMessage, setTaskProgressMessage] = useState("")
   const [editableDocument, setEditableDocument] = useState<ScriptYamlDocument | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [activeChapterIndex, setActiveChapterIndex] = useState(0)
   const [view, setView] = useState<ResultView>("overview")
   const [wrapYaml, setWrapYaml] = useState(true)
   const [generationStepIndex, setGenerationStepIndex] = useState(0)
+  const [generationStepText, setGenerationStepText] = useState(GENERATION_STEPS[0])
   const [draggedBeatId, setDraggedBeatId] = useState<string | null>(null)
   const [dragOverBeatId, setDragOverBeatId] = useState<string | null>(null)
   const [registryTab, setRegistryTab] = useState<RegistryTab>("characters")
@@ -619,10 +621,19 @@ export default function ScriptWorkshopPage() {
   const statusMenuRef = useRef<HTMLDivElement | null>(null)
   const characterRenameOriginRef = useRef<Record<number, string>>({})
   const settingRenameOriginRef = useRef<Record<number, string>>({})
+  const taskEventSourceRef = useRef<{ taskId: string; source: EventSource } | null>(null)
+  const loadDetailByIdRef = useRef<(taskId: string) => Promise<void>>(async () => {})
 
   useEffect(() => {
     localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft))
   }, [draft])
+
+  useEffect(() => {
+    return () => {
+      taskEventSourceRef.current?.source.close()
+      taskEventSourceRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     void loadHistory()
@@ -667,10 +678,110 @@ export default function ScriptWorkshopPage() {
     }
   }
 
-  const loadDetailById = useCallback(async (taskId: string, successMessage?: string) => {
+  function closeTaskEventStream(taskId?: string) {
+    if (!taskEventSourceRef.current) {
+      return
+    }
+    if (taskId && taskEventSourceRef.current.taskId !== taskId) {
+      return
+    }
+    taskEventSourceRef.current.source.close()
+    taskEventSourceRef.current = null
+  }
+
+  function upsertHistoryTask(
+    taskId: string,
+    patch: Partial<ScriptHistoryItem> & Pick<ScriptHistoryItem, "status">
+  ) {
+    setHistory((current) => {
+      const index = current.findIndex((item) => item.id === taskId)
+      if (index === -1) {
+        return current
+      }
+      const next = [...current]
+      next[index] = {
+        ...next[index],
+        ...patch,
+      }
+      return next
+    })
+  }
+
+  async function handleTaskEvent(taskId: string, event: ScriptTaskEvent) {
+      setGenerationStepText(getGenerationStepText(event.stage, event.message))
+      setTaskProgressMessage(event.message || "")
+      setActiveTaskMeta((current) =>
+        current && current.id === taskId
+          ? {
+              ...current,
+              status: event.status,
+              err_msg: event.error || current.err_msg,
+              updated_at: event.timestamp || current.updated_at,
+            }
+          : current
+      )
+      upsertHistoryTask(taskId, {
+        status: event.status,
+        err_msg: event.error,
+        updated_at: event.timestamp || new Date().toISOString(),
+      })
+
+      if (event.status === "succeeded") {
+        closeTaskEventStream(taskId)
+        setIsSubmitting(false)
+        setGenerationStepIndex(0)
+        setGenerationStepText(GENERATION_STEPS[0])
+        setTaskProgressMessage("")
+        await loadDetailById(taskId, "第一版剧本已生成完成，你可以继续审阅结构和编辑 YAML。")
+        await loadHistory()
+        return
+      }
+
+      if (event.status === "failed") {
+        closeTaskEventStream(taskId)
+        setIsSubmitting(false)
+        setGenerationStepIndex(0)
+        setGenerationStepText(GENERATION_STEPS[0])
+        setTaskProgressMessage(event.error || event.message || "任务执行失败。")
+        setError(event.error || event.message || "生成失败，请稍后重试。")
+        await loadDetailById(taskId)
+        await loadHistory()
+      }
+    }
+
+  function startTaskEventStream(taskId: string, eventUrl: string) {
+      if (taskEventSourceRef.current?.taskId === taskId) {
+        return
+      }
+
+      closeTaskEventStream()
+
+      const eventSource = openScriptEventStream(
+        eventUrl,
+        (event) => {
+          void handleTaskEvent(taskId, event)
+        },
+        () => {
+          // Native EventSource auto-reconnects. Keep the UI in submitting state
+          // and only surface an error if the task is not already terminal.
+          setTaskProgressMessage((current) =>
+            current || "状态流短暂断开，正在尝试自动重连。"
+          )
+        }
+      )
+
+      taskEventSourceRef.current = {
+        taskId,
+        source: eventSource,
+      }
+    }
+
+  async function loadDetailById(taskId: string, successMessage?: string) {
     setSelectedTaskId(taskId)
     setError("")
-    setFeedback("")
+    if (!successMessage) {
+      setFeedback("")
+    }
 
     try {
       const response = await getScriptDetail(taskId)
@@ -680,9 +791,13 @@ export default function ScriptWorkshopPage() {
       }
 
       const detail = response.data
+      setActiveTaskMeta(detail.metadata)
       const result = makeResultFromDetail(detail)
       if (result) {
         setResultForEditing(result)
+        closeTaskEventStream(taskId)
+        setIsSubmitting(false)
+        setTaskProgressMessage("")
         setSelectedNodeId(null)
         setSearchParams({ view: "detail", id: taskId })
         setView("overview")
@@ -691,16 +806,24 @@ export default function ScriptWorkshopPage() {
         }
       } else {
         setResultForEditing(null)
-        setFeedback(
-          detail.metadata.status === "failed"
-            ? `该任务生成失败：${detail.metadata.err_msg || "请重试"}`
-            : "该任务仍在处理中，请稍后刷新。"
-        )
+        setSearchParams({ view: "detail", id: taskId })
+        if (detail.metadata.status === "pending" || detail.metadata.status === "running") {
+          setTaskProgressMessage("任务仍在处理中，正在同步后台进度。")
+          setGenerationStepText(getGenerationStepText(detail.metadata.status, taskProgressMessage))
+          setIsSubmitting(true)
+          startTaskEventStream(taskId, `/api/v1/script/${taskId}/events`)
+        } else {
+          setTaskProgressMessage(detail.metadata.err_msg || "")
+        }
       }
     } catch (err) {
       setError(extractErrorMessage(err, "历史详情加载失败。"))
     }
-  }, [setSearchParams])
+  }
+
+  loadDetailByIdRef.current = async (taskId: string) => {
+    await loadDetailById(taskId)
+  }
 
   useEffect(() => {
     const taskIdFromQuery = searchParams.get("id")
@@ -710,16 +833,19 @@ export default function ScriptWorkshopPage() {
       return
     }
 
-    if (selectedTaskId === taskIdFromQuery && activeResult?.id === taskIdFromQuery) {
+    if (
+      selectedTaskId === taskIdFromQuery &&
+      (activeResult?.id === taskIdFromQuery || activeTaskMeta?.id === taskIdFromQuery)
+    ) {
       return
     }
 
     const timer = window.setTimeout(() => {
-      void loadDetailById(taskIdFromQuery)
+      void loadDetailByIdRef.current(taskIdFromQuery)
     }, 0)
 
     return () => window.clearTimeout(timer)
-  }, [searchParams, selectedTaskId, activeResult?.id, loadDetailById])
+  }, [searchParams, selectedTaskId, activeResult?.id, activeTaskMeta?.id])
 
   async function handleLogout() {
     try {
@@ -772,6 +898,7 @@ export default function ScriptWorkshopPage() {
 
   function setResultForEditing(result: WorkshopResult | null) {
     setActiveResult(result)
+    setActiveTaskMeta(result?.metadata ?? null)
     setEditableDocument(result ? parseScriptYaml(result.yaml) : null)
     setRegistryTab("characters")
     setSelectedCharacterIndex(0)
@@ -1114,22 +1241,37 @@ export default function ScriptWorkshopPage() {
         return
       }
 
-      const result = makeResultFromConvert(
-        { ...draft, chapters: trimmedChapters },
-        response.data
-      )
-      setResultForEditing(result)
-      setSelectedTaskId(result.id)
+      const now = new Date().toISOString()
+      const taskMeta: ScriptTaskMeta = {
+        id: response.data.id,
+        title: trimmedChapters[0]?.title || "未命名剧本",
+        genre: draft.genre,
+        tone: draft.tone,
+        pacing: draft.pacing,
+        source_chapters: trimmedChapters.length,
+        status: response.data.status,
+        created_at: now,
+        updated_at: now,
+      }
+
+      setResultForEditing(null)
+      setActiveTaskMeta(taskMeta)
+      setTaskProgressMessage("任务已提交，正在连接后台进度。")
+      setGenerationStepText(getGenerationStepText(response.data.status, "任务已提交，正在连接后台进度。"))
+      setSelectedTaskId(response.data.id)
       setSelectedNodeId(null)
-      setSearchParams({ view: "detail", id: result.id })
+      setSearchParams({ view: "detail", id: response.data.id })
       setView("overview")
-      setFeedback("第一版剧本舞台已经搭好，你可以继续看结构、复制 YAML 或回载历史。")
       await loadHistory()
+      startTaskEventStream(response.data.id, response.data.event_url)
     } catch (err) {
       setError(extractErrorMessage(err, "生成失败，请检查服务状态后重试。"))
     } finally {
-      setIsSubmitting(false)
-      setGenerationStepIndex(0)
+      if (!taskEventSourceRef.current) {
+        setIsSubmitting(false)
+        setGenerationStepIndex(0)
+        setGenerationStepText(GENERATION_STEPS[0])
+      }
     }
   }
 
@@ -1338,7 +1480,7 @@ export default function ScriptWorkshopPage() {
       ? [selectedBeatData.dialogue.speaker, ...characterNames]
       : characterNames
 
-  const activeStatus = getStatusMeta(activeResult?.metadata.status ?? "pending")
+  const activeStatus = getStatusMeta(activeResult?.metadata.status ?? activeTaskMeta?.status ?? "pending")
   const summary = editableDocument
     ? buildScriptSummary(editableDocument)
     : activeResult?.summary ?? {
@@ -1353,7 +1495,7 @@ export default function ScriptWorkshopPage() {
     <div className="min-h-screen bg-[#f6f6f7] text-slate-900">
       {isSubmitting ? (
         <GenerationOverlay
-          stepText={GENERATION_STEPS[generationStepIndex]}
+          stepText={generationStepText || GENERATION_STEPS[generationStepIndex]}
           chapterCount={draft.chapters.length}
           genre={draft.genre}
           tone={draft.tone}
@@ -1366,7 +1508,7 @@ export default function ScriptWorkshopPage() {
           <AppSidebar
             activeKey={sidebarView}
             username={user?.username}
-            footerLabel={activeResult ? activeStatus.label : "等待生成"}
+            footerLabel={activeStatus.label}
             onLogoClick={() => navigate("/")}
             authActionLabel="登出"
             onAuthAction={handleLogout}
@@ -1801,16 +1943,56 @@ export default function ScriptWorkshopPage() {
                 {!activeResult ? (
                   <StudioPanel
                     eyebrow="Detail"
-                    title="详情预览"
-                    description="先在工作台生成剧本，或从生成列表中点开一个历史结果。"
+                    title={activeTaskMeta ? activeTaskMeta.title || "任务详情" : "详情预览"}
+                    description={
+                      activeTaskMeta
+                        ? "任务状态会实时同步，完成后会自动载入最终 YAML 与结构结果。"
+                        : "先在工作台生成剧本，或从生成列表中点开一个历史结果。"
+                    }
                     className="rounded-[30px] border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]"
                   >
-                    <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-16 text-center">
-                      <p className="text-lg font-medium text-slate-800">还没有可展示的详情</p>
-                      <p className="mt-2 text-sm text-slate-400">
-                        你可以前往工作台生成，或者打开左侧“列表”选择一个已生成结果。
-                      </p>
-                    </div>
+                    {activeTaskMeta ? (
+                      <div className="space-y-5">
+                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                          {[
+                            { label: "状态", value: activeStatus.label },
+                            { label: "体裁", value: activeTaskMeta.genre },
+                            { label: "语气", value: activeTaskMeta.tone },
+                            { label: "节奏", value: activeTaskMeta.pacing },
+                            { label: "章节", value: `${activeTaskMeta.source_chapters} 章` },
+                          ].map((item) => (
+                            <div
+                              key={item.label}
+                              className="rounded-[22px] border border-black/6 bg-slate-50 px-4 py-4"
+                            >
+                              <p className="text-xs text-slate-400">{item.label}</p>
+                              <p className="mt-2 text-lg font-semibold text-slate-900">
+                                {item.value}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="rounded-[24px] border border-black/6 bg-slate-50 p-5">
+                          <p className="text-xs text-slate-400">当前进度</p>
+                          <p className="mt-3 text-sm leading-7 text-slate-600">
+                            {taskProgressMessage ||
+                              (activeTaskMeta.status === "failed"
+                                ? activeTaskMeta.err_msg || "任务执行失败，请稍后重试。"
+                                : "任务仍在处理中，已连接后台状态流，请稍候。")}
+                          </p>
+                          <p className="mt-4 text-sm text-slate-400">
+                            最近更新：{formatDateTime(activeTaskMeta.updated_at)}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-[24px] border border-dashed border-black/8 px-4 py-16 text-center">
+                        <p className="text-lg font-medium text-slate-800">还没有可展示的详情</p>
+                        <p className="mt-2 text-sm text-slate-400">
+                          你可以前往工作台生成，或者打开左侧“列表”选择一个已生成结果。
+                        </p>
+                      </div>
+                    )}
                   </StudioPanel>
                 ) : (
                   <>
