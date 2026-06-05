@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import {
   ArrowRight,
@@ -12,6 +12,7 @@ import { LoginCardDialog } from "@/components/studio/login-card-dialog"
 import { useAuthStore } from "@/stores"
 import { logout } from "@/services"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
+import { consumeSidebarEntranceAnimation } from "@/lib/sidebar-animation"
 
 const HERO_FEATURES = [
   "YAML 剧本初稿",
@@ -56,6 +57,7 @@ const MARQUEE_ROW_LAYOUT = [
 const MARQUEE_ITEM_OFFSET_PATTERN = [-18, 10, -8, 14, -12, 6, 0, 12]
 
 export default function DashboardPage() {
+  useRef(consumeSidebarEntranceAnimation())
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { user, isAuthenticated, logout: clearAuth } = useAuthStore()
@@ -148,10 +150,11 @@ export default function DashboardPage() {
       <div className="mx-auto max-w-[1440px] px-4 py-14 lg:px-6">
         <div className="grid gap-6 lg:grid-cols-[88px_minmax(0,1fr)]">
           <AppSidebar
-            activeKey={isAuthenticated ? "workspace" : ""}
+            activeKey=""
             username={user?.username ?? "未登录"}
             onLogoClick={() => navigate("/")}
             authActionLabel={isAuthenticated ? "登出" : "登录"}
+            animateItemsOnMount
             onAuthAction={handleAuthAction}
             items={[
               {

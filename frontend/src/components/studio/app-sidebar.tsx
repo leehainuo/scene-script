@@ -26,6 +26,7 @@ export function AppSidebar({
   username,
   onLogoClick,
   authActionLabel = "登录",
+  animateItemsOnMount = false,
   onAuthAction,
 }: {
   activeKey: string
@@ -33,6 +34,7 @@ export function AppSidebar({
   username?: string
   onLogoClick?: () => void
   authActionLabel?: string
+  animateItemsOnMount?: boolean
   onAuthAction: () => void
 }) {
   const userInitial = getUsernameInitial(username)
@@ -50,29 +52,38 @@ export function AppSidebar({
             <Brush className="h-4 w-4" strokeWidth={2.1} />
           </button>
           <div className="flex flex-col items-center gap-6">
-            {items.map((item) => {
+            {items.map((item, index) => {
               const active = activeKey === item.key
               return (
                 <button
                   key={item.key}
                   type="button"
                   onClick={item.onClick}
-                  className="flex w-full flex-col items-center gap-2"
+                  className={cn(
+                    "group flex w-full flex-col items-center gap-2",
+                    animateItemsOnMount &&
+                      "animate-in fade-in slide-in-from-left-3 duration-700 fill-mode-both ease-out"
+                  )}
+                  style={
+                    animateItemsOnMount
+                      ? { animationDelay: `${120 + index * 90}ms` }
+                      : undefined
+                  }
                 >
                   <div
                     className={cn(
-                      "flex h-6 w-6 items-center justify-center rounded-2xl transition-colors",
+                      "flex h-6 w-6 items-center justify-center rounded-2xl transition-[color,transform] duration-300",
                       active
                         ? "text-slate-950"
-                        : "text-slate-500 hover:text-slate-800"
+                        : "text-slate-500 group-hover:text-slate-800"
                     )}
                   >
                     <item.icon className="h-4 w-4" strokeWidth={2.2} />
                   </div>
                   <span
                     className={cn(
-                      "text-xs font-medium tracking-tight",
-                      active ? "text-slate-950" : "text-slate-500"
+                      "text-xs font-medium tracking-tight transition-colors duration-300",
+                      active ? "text-slate-950" : "text-slate-500 group-hover:text-slate-800"
                     )}
                   >
                     {item.label}

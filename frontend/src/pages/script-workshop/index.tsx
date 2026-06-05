@@ -35,6 +35,7 @@ import {
   serializeScriptYaml,
 } from "@/lib/script-yaml"
 import { formatScriptStyleSummary, getPacingLabel } from "@/lib/script-display"
+import { consumeSidebarEntranceAnimation } from "@/lib/sidebar-animation"
 import { cn } from "@/lib/utils"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
 import { toast } from "sonner"
@@ -650,6 +651,7 @@ export default function ScriptWorkshopPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { user, logout: clearAuth } = useAuthStore()
+  const shouldAnimateSidebarOnMount = useRef(consumeSidebarEntranceAnimation()).current
 
   const [draft, setDraft] = useState<ScriptConvertRequest>(() => {
     if (typeof window === "undefined") {
@@ -1606,6 +1608,7 @@ export default function ScriptWorkshopPage() {
           <AppSidebar
             activeKey={sidebarView}
             username={user?.username}
+            animateItemsOnMount={shouldAnimateSidebarOnMount}
             onLogoClick={() => navigate("/")}
             authActionLabel="登出"
             onAuthAction={handleLogout}
