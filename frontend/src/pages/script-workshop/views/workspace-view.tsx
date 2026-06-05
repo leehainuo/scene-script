@@ -107,16 +107,15 @@ export function WorkspaceView({
       <StudioPanel
         eyebrow="Workspace"
         title="开始输入你的小说章节"
-        description="主输入区负责内容，右侧参数区负责改编风格，避免所有控件挤在同一层。"
         animateOnMount
         animationDelayMs={40}
         actions={
-          <div className="inline-flex rounded-[20px] border border-black/8 bg-white p-1 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
+          <div className="inline-flex rounded-xl border border-black/8 bg-white p-1 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
             <button
               type="button"
               onClick={() => setWorkspaceInputMode("chapter")}
               className={cn(
-                "rounded-2xl px-4 py-2 text-sm transition-colors",
+                "rounded-lg px-4 py-2 text-sm transition-colors",
                 workspaceInputMode === "chapter"
                   ? "bg-slate-900 text-white shadow-[0_10px_20px_rgba(15,23,42,0.12)]"
                   : "text-slate-500 hover:text-slate-950"
@@ -128,7 +127,7 @@ export function WorkspaceView({
               type="button"
               onClick={() => setWorkspaceInputMode("import")}
               className={cn(
-                "inline-flex items-center rounded-2xl px-4 py-2 text-sm transition-colors",
+                "inline-flex items-center rounded-lg px-4 py-2 text-sm transition-colors",
                 workspaceInputMode === "import"
                   ? "bg-slate-900 text-white shadow-[0_10px_20px_rgba(15,23,42,0.12)]"
                   : "text-slate-500 hover:text-slate-950"

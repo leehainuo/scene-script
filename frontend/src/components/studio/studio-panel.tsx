@@ -25,7 +25,7 @@ export function StudioPanel({
   return (
     <section
       className={cn(
-        "rounded-[28px] border border-white/60 bg-white/72 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_28px_70px_rgba(15,23,42,0.12)]",
+        "rounded-xl border border-white/60 bg-white/72 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_28px_70px_rgba(15,23,42,0.12)]",
         animateOnMount &&
           "animate-in fade-in slide-in-from-bottom-2 duration-500 ease-out fill-mode-both",
         className

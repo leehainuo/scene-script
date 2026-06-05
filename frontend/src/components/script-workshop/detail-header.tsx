@@ -29,7 +29,6 @@ export function ScriptDetailHeader({
     <StudioPanel
       eyebrow="Detail"
       title={title}
-      description="结果详情保持简单干净，只展示最关键的信息。"
       animateOnMount
       animationDelayMs={0}
       actions={
