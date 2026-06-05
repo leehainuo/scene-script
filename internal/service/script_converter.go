@@ -52,6 +52,13 @@ type ConvertResult struct {
 	Usage             *einoSchema.TokenUsage
 }
 
+type ConvertProgress struct {
+	Stage   string
+	Message string
+}
+
+type ConvertProgressReporter func(ConvertProgress)
+
 // NewScriptConverter - Create a new script converter.
 func NewScriptConverter(cfg *config.LLMConf, llm LLMProvider) (*ScriptConverter, error) {
 	if llm == nil {
@@ -71,16 +78,23 @@ func NewScriptConverter(cfg *config.LLMConf, llm LLMProvider) (*ScriptConverter,
 
 // Convert - Convert novel text into normalized screenplay YAML.
 func (sc *ScriptConverter) Convert(ctx context.Context, req ConvertRequest) (*ConvertResult, error) {
+	return sc.ConvertWithProgress(ctx, req, nil)
+}
+
+// ConvertWithProgress - Convert novel text into normalized screenplay YAML with optional stage reporting.
+func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertRequest, report ConvertProgressReporter) (*ConvertResult, error) {
 	if err := sc.validateRequest(req); err != nil {
 		return nil, err
 	}
 
+	sc.reportProgress(report, ScriptTaskStageGenerating, "正在调用大模型生成剧本 YAML。")
 	systemPrompt, userPrompt := sc.promptManager.ConvertPrompt(req)
 	llmResp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, err
 	}
 
+	sc.reportProgress(report, ScriptTaskStageValidating, "首轮生成完成，正在做 YAML 与 schema 校验。")
 	result, convErr := sc.normalizeAndValidate(req, llmResp.Content)
 	if convErr == nil {
 		result.Usage = llmResp.Usage
@@ -94,12 +108,14 @@ func (sc *ScriptConverter) Convert(ctx context.Context, req ConvertRequest) (*Co
 	lastErr := convErr
 	lastOutput := llmResp.Content
 	for attempt := 1; attempt <= sc.promptManager.MaxRepairAttempts(); attempt++ {
+		sc.reportProgress(report, ScriptTaskStageRepairing, fmt.Sprintf("首轮结果未通过校验，正在执行第 %d 次修复。", attempt))
 		repairSystem, repairPrompt := sc.promptManager.RepairPrompt(req, lastOutput, lastErr, attempt)
 		repairResp, repairErr := sc.llm.GenerateScript(ctx, repairSystem, repairPrompt)
 		if repairErr != nil {
 			return nil, repairErr
 		}
 
+		sc.reportProgress(report, ScriptTaskStageValidating, fmt.Sprintf("第 %d 次修复完成，正在重新校验结果。", attempt))
 		result, convErr = sc.normalizeAndValidate(req, repairResp.Content)
 		if convErr == nil {
 			result.Usage = mergeTokenUsage(llmResp.Usage, repairResp.Usage)
@@ -111,6 +127,16 @@ func (sc *ScriptConverter) Convert(ctx context.Context, req ConvertRequest) (*Co
 	}
 
 	return nil, lastErr
+}
+
+func (sc *ScriptConverter) reportProgress(report ConvertProgressReporter, stage, message string) {
+	if report == nil {
+		return
+	}
+	report(ConvertProgress{
+		Stage:   stage,
+		Message: message,
+	})
 }
 
 // NormalizeEditedYAML validates and normalizes user-edited YAML against the
