@@ -438,6 +438,38 @@ func TestSanitizeQuotedYAMLTextConvertsBrokenQuotedSummary(t *testing.T) {
 	}
 }
 
+func TestSanitizeQuotedYAMLTextDecodesEscapedSummaryContent(t *testing.T) {
+	raw := "chapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"沈砚进入老宅。\\n\\n他看见薄木棺。\\\"异样\\\"升起。\"\n    scenes: []\n"
+
+	sanitized := sanitizeQuotedYAMLText(raw)
+
+	if strings.Contains(sanitized, `\n`) {
+		t.Fatalf("expected escaped newlines to be decoded, got %s", sanitized)
+	}
+	if strings.Contains(sanitized, `\"`) {
+		t.Fatalf("expected escaped quotes to be decoded, got %s", sanitized)
+	}
+	if !strings.Contains(sanitized, "summary: |-") {
+		t.Fatalf("expected summary to be rewritten as block scalar, got %s", sanitized)
+	}
+	if !strings.Contains(sanitized, "  他看见薄木棺。\"异样\"升起。") {
+		t.Fatalf("expected decoded summary body, got %s", sanitized)
+	}
+}
+
+func TestSanitizeQuotedYAMLTextTrimsDanglingTerminalQuote(t *testing.T) {
+	raw := "chapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"沈砚进山执行文物清点任务。\\n\\n推门入内，见厅堂中央摆放着同样被银钉钉死的薄木棺，悬念陡升。\\\"\"\n    scenes: []\n"
+
+	sanitized := sanitizeQuotedYAMLText(raw)
+
+	if strings.Contains(sanitized, `悬念陡升。"`) {
+		t.Fatalf("expected dangling terminal quote to be trimmed, got %s", sanitized)
+	}
+	if !strings.Contains(sanitized, "  推门入内，见厅堂中央摆放着同样被银钉钉死的薄木棺，悬念陡升。") {
+		t.Fatalf("expected cleaned summary body, got %s", sanitized)
+	}
+}
+
 func TestSanitizeKnownSequenceScalarsConvertsCharacterFields(t *testing.T) {
 	raw := "dramatis_personae:\n  - name: \"苏晚\"\n    archetype: \"调查者\"\n    motivation: \"搜集怪谈素材，揭开异常现象背后的真相\"\n    traits: \"敏锐、孤勇、理性中存有共情\"\n    relations: \"与陈阿婆构成记忆与遗愿的镜像关系\"\n    first_appearance: \"ch1\"\n"
 

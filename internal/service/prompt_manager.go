@@ -185,7 +185,7 @@ func (pm *PromptManager) SceneRewritePrompt(
 	scene model.Scene,
 	characters []model.Character,
 	settings []model.Setting,
-	mode string,
+	instruction string,
 ) (systemPrompt, userPrompt string) {
 	systemPrompt = defaultSceneRewriteSystemPrompt
 
@@ -198,7 +198,6 @@ func (pm *PromptManager) SceneRewritePrompt(
 	userPrompt = joinPromptSections(
 		fmt.Sprintf(`任务目标：
 - 当前只改写第 %d 章中的一个 scene
-- 改写模式：%s
 - 只输出一个 scene YAML 对象，字段必须严格包含：id, title, goal, location, time, pov, mood, beats, outcome
 - 不要输出 version、metadata、dramatis_personae、settings、chapters、consistency_report 等其他顶层字段
 
@@ -209,10 +208,11 @@ func (pm *PromptManager) SceneRewritePrompt(
 - 每个 beat 都必须有非空 summary
 - 当 beat.type 为 dialogue 或 inner 时，必须同时提供 dialogue.speaker 和 dialogue.content
 - 不要虚构原文章节中不存在的核心事实、人物关系或地点关系
-- 可以优化场景冲突、对白密度与节奏，但不能改写这一章的核心走向
+- 你必须优先满足用户给出的场景改写要求，但不能改写这一章的核心走向
 - 对 title/goal/outcome/dialogue.content 等长文本，优先使用 YAML block scalar（|-）
-- 只返回 scene YAML 正文，禁止解释`, chapterIndex+1, sceneRewriteModeInstruction(mode), scene.ID),
+- 只返回 scene YAML 正文，禁止解释`, chapterIndex+1, scene.ID),
 		fmt.Sprintf("改编设定：\n- 体裁：%s\n- 语气：%s\n- 节奏：%s", req.Genre, req.Tone, req.Pacing),
+		"用户改写要求：\n"+strings.TrimSpace(instruction),
 		sceneRewriteContext("人物注册表", rewriteCharacterNames(characters)),
 		sceneRewriteContext("地点注册表", rewriteSettingNames(settings)),
 		"当前章节原文：\n"+strings.TrimSpace(sourceChapter.Text),
@@ -324,19 +324,6 @@ func (pm *PromptManager) outputBudgetRule(req ConvertRequest) string {
 		return "当源章节数为 6~8 章时，使用中等压缩：每章 1~3 个 scenes、每个 scene 2~4 个 beats，优先保留推进主线所需的关键事件"
 	default:
 		return "当源章节数为 3~5 章时，可保持常规细度：每章 2~4 个 scenes、每个 scene 2~5 个 beats，但仍需避免空转和重复描述"
-	}
-}
-
-func sceneRewriteModeInstruction(mode string) string {
-	switch mode {
-	case "fidelity":
-		return "更忠于原文：优先回收本章原文细节，不主动扩写额外冲突，不改变既有事实"
-	case "conflict":
-		return "更有冲突：强化角色目标、阻碍、张力和情绪对撞，但不能改写章节核心事实"
-	case "concise":
-		return "更紧凑：压缩重复铺陈，减少冗余 beats，让场景推进更利落"
-	default:
-		return "保持当前场景核心事实不变，做稳健改写"
 	}
 }
 

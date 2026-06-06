@@ -75,7 +75,7 @@ func (l *RewriteScriptSceneLogic) Rewrite(userID int64, req *types.RewriteScript
 		Source:       convertReq,
 		ChapterIndex: req.ChapterIndex,
 		SceneIndex:   req.SceneIndex,
-		Mode:         req.Mode,
+		Instruction:  req.Instruction,
 	})
 	if err != nil {
 		return nil, l.mapRewriteError(err)

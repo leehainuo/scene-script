@@ -170,13 +170,11 @@ export interface SaveScriptResultRequest {
   yaml: string
 }
 
-export type ScriptSceneRewriteMode = "fidelity" | "conflict" | "concise"
-
 export interface RewriteScriptSceneRequest {
   yaml: string
   chapter_index: number
   scene_index: number
-  mode: ScriptSceneRewriteMode
+  instruction: string
 }
 
 export interface ScriptListParams extends PaginationParams {

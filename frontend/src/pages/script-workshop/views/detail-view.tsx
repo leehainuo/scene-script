@@ -11,7 +11,6 @@ import { Label } from "@/components/ui/label"
 import { formatScriptStyleSummary, getPacingLabel } from "@/lib/script-display"
 import {
   BEAT_TYPE_OPTIONS,
-  SCENE_REWRITE_OPTIONS,
   formatDateTime,
   getBeatTypeLabel,
 } from "@/lib/script-workshop"
@@ -21,7 +20,6 @@ import type {
   ScriptBeat,
   ScriptChapter,
   ScriptScene,
-  ScriptSceneRewriteMode,
   ScriptTaskMeta,
   ScriptYamlDocument,
 } from "@/types"
@@ -145,8 +143,10 @@ type DetailViewProps = {
   currentPovOptions: string[]
   currentLocationOptions: string[]
   currentSpeakerOptions: string[]
-  sceneRewriteMode: ScriptSceneRewriteMode | null
-  handleRewriteScene: (mode: ScriptSceneRewriteMode) => Promise<void>
+  sceneRewriteInstruction: string
+  setSceneRewriteInstruction: Dispatch<SetStateAction<string>>
+  isSceneRewriting: boolean
+  handleRewriteScene: () => Promise<void>
 }
 
 export function DetailView({
@@ -201,7 +201,9 @@ export function DetailView({
   currentPovOptions,
   currentLocationOptions,
   currentSpeakerOptions,
-  sceneRewriteMode,
+  sceneRewriteInstruction,
+  setSceneRewriteInstruction,
+  isSceneRewriting,
   handleRewriteScene,
 }: DetailViewProps) {
   return (
@@ -937,38 +939,36 @@ export function DetailView({
                               <div>
                                 <p className="text-sm font-medium text-slate-900">AI 场景改写</p>
                                 <p className="mt-1 text-sm leading-6 text-slate-500">
-                                  基于当前章节原文，只重写这个场景。改写结果会先进入当前编辑态，不会自动覆盖已保存版本。
+                                  写下你希望这个场景怎么调整，系统会结合当前章节原文和这个场景的现有结构一起改写。结果会先进入当前编辑态，不会自动覆盖已保存版本。
                                 </p>
                               </div>
                               <span className="rounded-full border border-sky-100 bg-white px-3 py-1 text-xs text-sky-600">
                                 当前场景 {selectedSceneData.beats.length} 个节拍
                               </span>
                             </div>
-                            <div className="mt-4 flex flex-wrap gap-2">
-                              {SCENE_REWRITE_OPTIONS.map((item) => {
-                                const active = sceneRewriteMode === item.value
-                                return (
-                                  <Button
-                                    key={item.value}
-                                    type="button"
-                                    size="sm"
-                                    variant={item.value === "conflict" ? "default" : "outline"}
-                                    disabled={sceneRewriteMode !== null}
-                                    onClick={() => void handleRewriteScene(item.value)}
-                                    className={cn(
-                                      "rounded-full",
-                                      item.value === "conflict"
-                                        ? "bg-slate-900 text-white hover:bg-slate-800"
-                                        : "border-black/8 bg-white text-slate-700 hover:bg-slate-50",
-                                      active && "opacity-80"
-                                    )}
-                                    title={item.hint}
-                                  >
-                                    <Wand2 className="mr-2 h-4 w-4" />
-                                    {active ? "改写中..." : item.label}
-                                  </Button>
-                                )
-                              })}
+                            <div className="mt-4 space-y-3">
+                              <textarea
+                                value={sceneRewriteInstruction}
+                                onChange={(event) => setSceneRewriteInstruction(event.target.value)}
+                                placeholder="例如：保留原文事实，不改结局，把冲突集中到沈砚与典当行老板之间，对白更克制一些。"
+                                className="min-h-[120px] w-full rounded-[20px] border border-black/8 bg-white px-4 py-4 text-sm leading-7 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-3 focus:ring-sky-100"
+                                maxLength={300}
+                              />
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <p className="text-xs leading-5 text-slate-400">
+                                  只描述这个场景要怎么改，不要要求改整章或整部作品。最多 300 字。
+                                </p>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={isSceneRewriting}
+                                  onClick={() => void handleRewriteScene()}
+                                  className="rounded-full bg-slate-900 text-white hover:bg-slate-800"
+                                >
+                                  <Wand2 className="mr-2 h-4 w-4" />
+                                  {isSceneRewriting ? "改写中..." : "按要求改写"}
+                                </Button>
+                              </div>
                             </div>
                           </div>
                           <div className="grid gap-4 md:grid-cols-2">

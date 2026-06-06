@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +69,7 @@ type SceneRewriteRequest struct {
 	Source       ConvertRequest
 	ChapterIndex int
 	SceneIndex   int
-	Mode         string
+	Instruction  string
 }
 
 const (
@@ -632,7 +633,7 @@ func (sc *ScriptConverter) RewriteScene(ctx context.Context, req SceneRewriteReq
 		currentScene,
 		scriptYAML.DramatisPersonae,
 		scriptYAML.Settings,
-		req.Mode,
+		req.Instruction,
 	)
 	llmResp, err := sc.generateYAMLScript(ctx, systemPrompt, userPrompt)
 	if err != nil {
@@ -949,6 +950,10 @@ func sanitizeQuotedYAMLText(raw string) string {
 		}
 
 		unquoted := trimQuotedScalarEdge(valuePart)
+		if decoded, ok := decodeDoubleQuotedYAMLScalar(valuePart); ok {
+			unquoted = decoded
+		}
+		unquoted = trimDanglingTerminalQuote(unquoted)
 		indent := strings.Repeat(" ", len(keyPart)-len(strings.TrimLeft(keyPart, " "))+2)
 		output = append(output, keyPart+": |-")
 		for _, blockLine := range strings.Split(unquoted, "\n") {
@@ -965,7 +970,12 @@ func shouldConvertQuotedScalar(value string) bool {
 
 	if hasQuotedScalarTerminator(value) {
 		inner := trimQuotedScalarEdge(value)
-		return strings.Contains(inner, `"`) || strings.Contains(inner, "：") || strings.Contains(inner, "“") || strings.Contains(inner, "”")
+		return strings.Contains(inner, `"`) ||
+			strings.Contains(inner, `\"`) ||
+			strings.Contains(inner, `\n`) ||
+			strings.Contains(inner, "：") ||
+			strings.Contains(inner, "“") ||
+			strings.Contains(inner, "”")
 	}
 
 	return true
@@ -992,6 +1002,46 @@ func trimQuotedScalarEdge(value string) string {
 		}
 		trimmed = string(runes[:len(runes)-1])
 	}
+}
+
+func decodeDoubleQuotedYAMLScalar(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+		return "", false
+	}
+	decoded, err := strconv.Unquote(value)
+	if err != nil {
+		return "", false
+	}
+	return decoded, true
+}
+
+func trimDanglingTerminalQuote(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return value
+	}
+	runes := []rune(trimmed)
+	last := runes[len(runes)-1]
+	if last != '"' && last != '“' && last != '”' {
+		return value
+	}
+	if countQuoteLikeRunes(trimmed)%2 == 0 {
+		return value
+	}
+	return strings.TrimRightFunc(value, func(r rune) bool {
+		return r == '"' || r == '“' || r == '”'
+	})
+}
+
+func countQuoteLikeRunes(value string) int {
+	count := 0
+	for _, r := range value {
+		if r == '"' || r == '“' || r == '”' {
+			count++
+		}
+	}
+	return count
 }
 
 func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req ConvertRequest, rawContent string) (*ConvertResult, error) {

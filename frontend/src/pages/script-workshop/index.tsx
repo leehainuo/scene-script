@@ -57,7 +57,6 @@ import type {
   ScriptChapter,
   ScriptChapterInput,
   ScriptConvertRequest,
-  ScriptSceneRewriteMode,
   ScriptScene,
   ScriptYamlDocument,
 } from "@/types"
@@ -103,7 +102,8 @@ export default function ScriptWorkshopPage() {
   const [selectedSettingIndex, setSelectedSettingIndex] = useState(0)
   const [showValidationErrors, setShowValidationErrors] = useState(false)
   const [renameConfirm, setRenameConfirm] = useState<RenameConfirmState>(null)
-  const [sceneRewriteMode, setSceneRewriteMode] = useState<ScriptSceneRewriteMode | null>(null)
+  const [sceneRewriteInstruction, setSceneRewriteInstruction] = useState("")
+  const [isSceneRewriting, setIsSceneRewriting] = useState(false)
   const [floatingAction, setFloatingAction] = useState<"submit" | "reset" | null>(null)
   const [workspaceInputMode, setWorkspaceInputMode] = useState<WorkspaceInputMode>("chapter")
   const [importSourceText, setImportSourceText] = useState("")
@@ -738,19 +738,24 @@ export default function ScriptWorkshopPage() {
     }
   }
 
-  async function handleRewriteScene(mode: ScriptSceneRewriteMode) {
+  async function handleRewriteScene() {
     if (!activeResult || !liveYaml || !selectedNode || selectedNode.kind !== "scene") {
       toast.error("请先在结构树中选中一个场景后再使用 AI 改写。")
       return
     }
+    const instruction = sceneRewriteInstruction.trim()
+    if (!instruction) {
+      toast.error("请先写下你希望这个场景如何调整。")
+      return
+    }
 
-    setSceneRewriteMode(mode)
+    setIsSceneRewriting(true)
     try {
       const response = await rewriteScriptScene(activeResult.id, {
         yaml: liveYaml,
         chapter_index: selectedNode.chapterIndex,
         scene_index: selectedNode.sceneIndex ?? 0,
-        mode,
+        instruction,
       })
       if (response.code !== 0 || !response.data?.yaml) {
         toast.error(response.msg || "场景 AI 改写失败，请稍后再试。")
@@ -765,11 +770,12 @@ export default function ScriptWorkshopPage() {
 
       setEditableDocument(nextDocument)
       setShowValidationErrors(false)
+      setSceneRewriteInstruction("")
       toast.success("AI 已改写当前场景，你可以继续微调后再保存。")
     } catch (err) {
       toast.error(extractErrorMessage(err, "场景 AI 改写失败，请稍后再试。"))
     } finally {
-      setSceneRewriteMode(null)
+      setIsSceneRewriting(false)
     }
   }
 
@@ -1105,7 +1111,9 @@ export default function ScriptWorkshopPage() {
                 currentPovOptions={currentPovOptions}
                 currentLocationOptions={currentLocationOptions}
                 currentSpeakerOptions={currentSpeakerOptions}
-                sceneRewriteMode={sceneRewriteMode}
+                sceneRewriteInstruction={sceneRewriteInstruction}
+                setSceneRewriteInstruction={setSceneRewriteInstruction}
+                isSceneRewriting={isSceneRewriting}
                 handleRewriteScene={handleRewriteScene}
               />
             ) : null}
