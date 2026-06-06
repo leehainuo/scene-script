@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	einoSchema "github.com/cloudwego/eino/schema"
@@ -69,6 +70,7 @@ const (
 	minConvertSourceChapters       = 3
 	maxConvertSourceChapters       = 12
 	longFormChapterCountThreshold  = 8
+	longFormSummaryConcurrency     = 3
 )
 
 // NewScriptConverter - Create a new script converter.
@@ -129,7 +131,7 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 
 	sc.reportProgress(report, ScriptTaskStageGenerating, "正在调用大模型生成剧本 YAML。")
 	systemPrompt, userPrompt := sc.promptManager.ConvertPrompt(workingReq)
-	llmResp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
+	llmResp, err := sc.generateYAMLScript(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		logn.Error("script converter initial generation failed", TaskLogFields(ctx, ScriptTaskStageGenerating, zap.Error(err))...)
 		return nil, err
@@ -174,7 +176,7 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 		)
 		sc.reportProgress(report, ScriptTaskStageRepairing, fmt.Sprintf("首轮结果未通过校验，正在执行第 %d 次修复。", attempt))
 		repairSystem, repairPrompt := sc.promptManager.RepairPrompt(workingReq, lastOutput, lastErr, attempt)
-		repairResp, repairErr := sc.llm.GenerateScript(ctx, repairSystem, repairPrompt)
+		repairResp, repairErr := sc.generateYAMLScript(ctx, repairSystem, repairPrompt)
 		if repairErr != nil {
 			logn.Error("script converter repair generation failed",
 				TaskLogFields(ctx, ScriptTaskStageRepairing,
@@ -248,47 +250,314 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 		Pacing:   req.Pacing,
 	}
 
+	structuredEnabled := false
+	if _, ok := sc.llm.(StructuredSummaryProvider); ok {
+		structuredEnabled = true
+	}
 	usages := make([]*einoSchema.TokenUsage, 0, len(req.Chapters))
 	targetChars := summaryTargetChars(req)
-	for index, chapter := range req.Chapters {
-		systemPrompt, userPrompt := sc.promptManager.ChapterSummaryPrompt(req, chapter, index, targetChars)
-		resp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
-		if err != nil {
-			return ConvertRequest{}, nil, err
-		}
+	logn.Debug("script converter long form summary started",
+		TaskLogFields(ctx, "long_form_summary_started",
+			zap.Int("chapter_count", len(req.Chapters)),
+			zap.Int("target_chars", targetChars),
+			zap.Int("concurrency_limit", minInt(longFormSummaryConcurrency, len(req.Chapters))),
+			zap.Bool("structured_summary_enabled", structuredEnabled),
+		)...,
+	)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-		compressed.Chapters[index] = ChapterInput{
-			Title: chapter.Title,
-			Text:  normalizeChapterSummary(chapter.Title, resp.Content),
-		}
-		usages = append(usages, resp.Usage)
+	usagesByIndex := make([]*einoSchema.TokenUsage, len(req.Chapters))
+	semaphore := make(chan struct{}, minInt(longFormSummaryConcurrency, len(req.Chapters)))
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	for index, chapter := range req.Chapters {
+		wg.Add(1)
+		go func(index int, chapter ChapterInput) {
+			defer wg.Done()
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-semaphore }()
+
+			summaryText, usage, err := sc.summarizeChapterForLongForm(ctx, req, chapter, index, targetChars, structuredEnabled)
+			if err != nil {
+				select {
+				case errCh <- err:
+					cancel()
+				default:
+				}
+				return
+			}
+			compressed.Chapters[index] = ChapterInput{
+				Title: chapter.Title,
+				Text:  summaryText,
+			}
+			usagesByIndex[index] = usage
+		}(index, chapter)
+	}
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return ConvertRequest{}, nil, err
+	default:
 	}
 
+	for _, usage := range usagesByIndex {
+		if usage != nil {
+			usages = append(usages, usage)
+		}
+	}
+
+	logn.Debug("script converter long form summary completed",
+		TaskLogFields(ctx, "long_form_summary_completed",
+			zap.Int("chapter_count", len(compressed.Chapters)),
+			zap.Int("target_chars", targetChars),
+			zap.Bool("structured_summary_enabled", structuredEnabled),
+			zap.Any("usage", mergeTokenUsage(usages...)),
+		)...,
+	)
 	return compressed, mergeTokenUsage(usages...), nil
+}
+
+func (sc *ScriptConverter) summarizeChapterForLongForm(ctx context.Context, req ConvertRequest, chapter ChapterInput, index int, targetChars int, structuredEnabled bool) (string, *einoSchema.TokenUsage, error) {
+	chapterStartedAt := time.Now()
+	chapterTitle := strings.TrimSpace(chapter.Title)
+	charCount := len([]rune(strings.TrimSpace(chapter.Text)))
+	finalMode := "text"
+	fallbackReason := ""
+
+	logn.Debug("script converter chapter summary started",
+		TaskLogFields(ctx, "long_form_chapter_summary_started",
+			zap.Int("chapter_index", index),
+			zap.String("chapter_title", chapterTitle),
+			zap.Int("source_char_count", charCount),
+			zap.Bool("structured_summary_enabled", structuredEnabled),
+		)...,
+	)
+
+	if structuredLLM, ok := sc.llm.(StructuredSummaryProvider); ok {
+		systemPrompt, userPrompt := sc.promptManager.ChapterSummaryStructuredPrompt(req, chapter, index, targetChars)
+		resp, err := structuredLLM.GenerateStructuredChapterSummary(ctx, systemPrompt, userPrompt)
+		if err == nil {
+			finalMode = "structured"
+			summaryText := normalizeStructuredChapterSummary(chapter.Title, resp.Summary)
+			logn.Debug("script converter chapter summary done",
+				TaskLogFields(ctx, "long_form_chapter_summary_done",
+					zap.Int("chapter_index", index),
+					zap.String("chapter_title", chapterTitle),
+					zap.String("summary_mode", finalMode),
+					zap.Int("source_char_count", charCount),
+					zap.Int("summary_char_count", len([]rune(summaryText))),
+					zap.Int64("elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
+					zap.Bool("fallback_triggered", false),
+					zap.Any("usage", resp.Usage),
+				)...,
+			)
+			return summaryText, resp.Usage, nil
+		}
+		fallbackReason = err.Error()
+		logn.Warn("structured summary generation failed, fallback to text summary",
+			TaskLogFields(ctx, "long_form_summary_fallback",
+				zap.Int("chapter_index", index),
+				zap.String("chapter_title", chapterTitle),
+				zap.Int("source_char_count", charCount),
+				zap.String("fallback_from", "structured"),
+				zap.String("fallback_to", "text"),
+				zap.Int64("structured_elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
+				zap.Error(err),
+			)...,
+		)
+	}
+
+	systemPrompt, userPrompt := sc.promptManager.ChapterSummaryPrompt(req, chapter, index, targetChars)
+	resp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
+	if err != nil {
+		return "", nil, err
+	}
+
+	summaryText := normalizeChapterSummary(chapter.Title, resp.Content)
+	logn.Debug("script converter chapter summary done",
+		TaskLogFields(ctx, "long_form_chapter_summary_done",
+			zap.Int("chapter_index", index),
+			zap.String("chapter_title", chapterTitle),
+			zap.String("summary_mode", finalMode),
+			zap.Int("source_char_count", charCount),
+			zap.Int("summary_char_count", len([]rune(summaryText))),
+			zap.Int64("elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
+			zap.Bool("fallback_triggered", fallbackReason != ""),
+			zap.String("fallback_reason", fallbackReason),
+			zap.Any("usage", resp.Usage),
+		)...,
+	)
+	return summaryText, resp.Usage, nil
+}
+
+func (sc *ScriptConverter) generateYAMLScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error) {
+	if yamlLLM, ok := sc.llm.(YAMLGenerationProvider); ok {
+		return yamlLLM.GenerateYAMLScript(ctx, systemPrompt, userPrompt)
+	}
+	return sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
+}
+
+func normalizeStructuredChapterSummary(title string, summary StructuredChapterSummary) string {
+	structured := map[string][]string{
+		"关键人物：": toBulletList(summary.Characters),
+		"关键地点：": toBulletList(summary.Locations),
+		"关键事件：": toBulletList(summary.PlotPoints),
+		"关键冲突：": toBulletList(summary.Conflicts),
+		"伏笔线索：": toBulletList(summary.Foreshadow),
+	}
+	if strings.TrimSpace(summary.ChapterTitle) != "" {
+		title = summary.ChapterTitle
+	}
+	endingState := strings.TrimSpace(summary.EndingState)
+	if endingState == "" {
+		endingState = "无"
+	}
+	return defaultStructuredChapterSummary(title, buildStructuredSummaryLines(structured, endingState))
 }
 
 func normalizeChapterSummary(title, raw string) string {
 	text := strings.TrimSpace(raw)
 	if text == "" {
-		return fmt.Sprintf("章节标题：%s\n该章节摘要为空，请回退到原文重新生成。", strings.TrimSpace(title))
+		return defaultStructuredChapterSummary(title, nil)
 	}
 
 	lines := strings.Split(text, "\n")
-	normalized := make([]string, 0, len(lines)+1)
-	header := fmt.Sprintf("章节标题：%s", strings.TrimSpace(title))
-	if len(lines) == 0 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "章节标题：") {
-		normalized = append(normalized, header)
+	structured := map[string][]string{
+		"关键人物：": {},
+		"关键地点：": {},
+		"关键事件：": {},
+		"关键冲突：": {},
+		"伏笔线索：": {},
 	}
+	endingState := ""
+	currentSection := ""
+	hasStructuredSections := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-		normalized = append(normalized, trimmed)
+
+		switch trimmed {
+		case "关键人物：", "关键地点：", "关键事件：", "关键冲突：", "伏笔线索：":
+			currentSection = trimmed
+			hasStructuredSections = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "结尾状态：") {
+			endingState = strings.TrimSpace(strings.TrimPrefix(trimmed, "结尾状态："))
+			hasStructuredSections = true
+			currentSection = ""
+			continue
+		}
+		if strings.HasPrefix(trimmed, "章节标题：") {
+			hasStructuredSections = true
+			currentSection = ""
+			continue
+		}
+
+		if currentSection != "" {
+			if strings.HasPrefix(trimmed, "- ") {
+				structured[currentSection] = append(structured[currentSection], trimmed)
+			} else {
+				structured[currentSection] = append(structured[currentSection], "- "+trimmed)
+			}
+			continue
+		}
+
+		structured["关键事件："] = append(structured["关键事件："], "- "+trimmed)
 	}
 
-	return strings.Join(normalized, "\n")
+	if !hasStructuredSections {
+		return defaultStructuredChapterSummary(title, []string{text})
+	}
+
+	if endingState == "" {
+		endingState = "无"
+	}
+
+	return defaultStructuredChapterSummary(title, buildStructuredSummaryLines(structured, endingState))
+}
+
+func buildStructuredSummaryLines(structured map[string][]string, endingState string) []string {
+	lines := make([]string, 0, 16)
+	for _, section := range []string{"关键人物：", "关键地点：", "关键事件：", "关键冲突：", "伏笔线索："} {
+		lines = append(lines, section)
+		items := structured[section]
+		if len(items) == 0 {
+			lines = append(lines, "- 无")
+			continue
+		}
+		lines = append(lines, items...)
+	}
+	lines = append(lines, "结尾状态："+endingState)
+	return lines
+}
+
+func defaultStructuredChapterSummary(title string, eventFallback []string) string {
+	lines := []string{
+		fmt.Sprintf("章节标题：%s", strings.TrimSpace(title)),
+		"关键人物：",
+		"- 无",
+		"关键地点：",
+		"- 无",
+		"关键事件：",
+	}
+	if len(eventFallback) == 0 {
+		lines = append(lines, "- 无")
+	} else {
+		for _, item := range eventFallback {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if strings.HasPrefix(item, "- ") {
+				lines = append(lines, item)
+			} else {
+				lines = append(lines, "- "+item)
+			}
+		}
+		if lines[len(lines)-1] == "关键事件：" {
+			lines = append(lines, "- 无")
+		}
+	}
+	lines = append(lines,
+		"关键冲突：",
+		"- 无",
+		"伏笔线索：",
+		"- 无",
+		"结尾状态：无",
+	)
+	return strings.Join(lines, "\n")
+}
+
+func toBulletList(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		lines = append(lines, "- "+item)
+	}
+	return lines
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func summaryTargetChars(req ConvertRequest) int {
@@ -603,6 +872,16 @@ func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req Convert
 		return nil, NewConvertError(ConvertErrorYAMLParse, "yaml parse failed", parseErr)
 	}
 
+	beatFixes, beatDrops := normalizeMalformedBeats(scriptYAML)
+	if beatFixes > 0 || beatDrops > 0 {
+		logn.Debug("script beat normalization applied",
+			TaskLogFields(ctx, "beat_normalized",
+				zap.Int("beat_fixes", beatFixes),
+				zap.Int("beat_drops", beatDrops),
+			)...,
+		)
+	}
+
 	schemaErr := sc.validateSchema(scriptYAML, req)
 	if schemaErr != nil {
 		logn.Debug("script schema validation failed", TaskLogFields(ctx, "schema_invalid", zap.Error(schemaErr))...)
@@ -621,6 +900,83 @@ func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req Convert
 		Summary:           sc.generateSummary(scriptYAML),
 		ConsistencyReport: scriptYAML.ConsistencyReport,
 	}, nil
+}
+
+func normalizeMalformedBeats(script *model.ScriptYAML) (fixed int, dropped int) {
+	for chapterIndex := range script.Chapters {
+		for sceneIndex := range script.Chapters[chapterIndex].Scenes {
+			scene := &script.Chapters[chapterIndex].Scenes[sceneIndex]
+			if scene.Beats == nil {
+				continue
+			}
+			normalized := make([]model.Beat, 0, len(scene.Beats))
+			for _, beat := range scene.Beats {
+				nextBeat, keep, changed := normalizeBeat(beat)
+				if changed {
+					fixed++
+				}
+				if !keep {
+					dropped++
+					continue
+				}
+				normalized = append(normalized, nextBeat)
+			}
+			scene.Beats = normalized
+		}
+	}
+	return fixed, dropped
+}
+
+func normalizeBeat(beat model.Beat) (model.Beat, bool, bool) {
+	changed := false
+	beat.Type = strings.TrimSpace(beat.Type)
+	beat.Summary = strings.TrimSpace(beat.Summary)
+	if beat.Dialogue != nil {
+		beat.Dialogue.Speaker = strings.TrimSpace(beat.Dialogue.Speaker)
+		beat.Dialogue.Content = strings.TrimSpace(beat.Dialogue.Content)
+		if beat.Dialogue.Speaker == "" && beat.Dialogue.Content == "" {
+			beat.Dialogue = nil
+			changed = true
+		}
+	}
+
+	if beat.Summary == "" && beat.Dialogue != nil && beat.Dialogue.Content != "" {
+		beat.Summary = summarizeBeatText(beat.Dialogue.Content)
+		changed = true
+	}
+
+	if beat.Type == "dialogue" || beat.Type == "inner" {
+		if beat.Dialogue == nil || strings.TrimSpace(beat.Dialogue.Speaker) == "" || strings.TrimSpace(beat.Dialogue.Content) == "" {
+			if beat.Summary != "" {
+				// Downgrade malformed dialogue-like beats into exposition to preserve structure without fabricating dialogue payloads.
+				beat.Type = "exposition"
+				beat.Dialogue = nil
+				changed = true
+			}
+		}
+	}
+
+	if beat.Summary == "" {
+		return beat, false, true
+	}
+	if (beat.Type == "dialogue" || beat.Type == "inner") && beat.Dialogue == nil {
+		return beat, false, true
+	}
+	return beat, true, changed
+}
+
+func summarizeBeatText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) <= 24 {
+		return text
+	}
+	return string(runes[:24]) + "..."
 }
 
 func isRepairableConvertError(err error) bool {
