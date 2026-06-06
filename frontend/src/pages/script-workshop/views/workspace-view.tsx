@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from "react"
 import { ChevronDown, Check, FileUp, LoaderCircle, RefreshCw, Trash2, Wand2 } from "lucide-react"
-import { StudioPanel } from "@/components/studio/studio-panel"
+import { SectionPanel } from "@/components/shared/section-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -11,20 +11,14 @@ import {
   TONE_OPTIONS,
   WORKSPACE_DRAFT_FORM_ID,
 } from "@/lib/script-workshop"
-import type { ImportedChapterDraft, Pacing, WorkspaceInputMode } from "@/lib/script-workshop"
+import type {
+  ChapterSummary,
+  ImportedChapterDraft,
+  Pacing,
+  WorkspaceInputMode,
+} from "@/lib/script-workshop"
 import { cn } from "@/lib/utils"
 import type { ScriptChapterInput, ScriptConvertRequest } from "@/types"
-
-type CompletionState = "ready" | "partial" | "empty" | string
-
-type ChapterSummary = {
-  index: number
-  title: string
-  textCount: number
-  completionState: CompletionState
-  statusLabel: string
-  detailLabel: string
-}
 
 type WorkspaceViewProps = {
   draft: ScriptConvertRequest
@@ -113,7 +107,7 @@ export function WorkspaceView({
         </p>
       </div>
 
-      <StudioPanel
+      <SectionPanel
         eyebrow="Workspace"
         title="开始输入你的小说章节"
         animateOnMount
@@ -505,7 +499,7 @@ export function WorkspaceView({
             </div>
           </div>
         </form>
-      </StudioPanel>
+      </SectionPanel>
 
       <div className="pointer-events-none fixed inset-x-4 bottom-5 z-30 flex justify-end lg:right-6">
         <div className="pointer-events-auto flex flex-col items-end gap-3">
