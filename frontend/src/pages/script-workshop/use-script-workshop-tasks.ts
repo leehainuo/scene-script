@@ -231,7 +231,7 @@ export function useScriptWorkshopTasks({
         setTaskProgressMessage("")
         setSelectedNodeId(null)
         setSearchParams({ view: "detail", id: taskId })
-        setView("overview")
+        setView("summary")
         if (successMessage) {
           toast.success(successMessage)
         }
@@ -346,7 +346,7 @@ export function useScriptWorkshopTasks({
       setSelectedTaskId(response.data.id)
       setSelectedNodeId(null)
       setSearchParams({ view: "detail", id: response.data.id })
-      setView("overview")
+      setView("summary")
       await loadHistory()
       startTaskEventStream(response.data.id, response.data.event_url)
     } catch (err) {
