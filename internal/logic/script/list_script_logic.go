@@ -31,6 +31,9 @@ func (l *ListScriptLogic) List(userID int64, req *types.ListScriptReq) (*types.L
 	if userID <= 0 {
 		return nil, errorn.New(http.StatusBadRequest, "invalid user id")
 	}
+	if req == nil {
+		req = &types.ListScriptReq{}
+	}
 	page := req.Page
 	if page <= 0 {
 		page = 1

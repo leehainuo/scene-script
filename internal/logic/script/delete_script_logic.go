@@ -2,7 +2,6 @@ package script
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"scene-script/internal/model"
@@ -28,22 +27,13 @@ func NewDeleteScriptLogic(c context.Context, svc *svc.ServiceContext) *DeleteScr
 }
 
 func (l *DeleteScriptLogic) Delete(userID int64, req *types.DeleteScriptReq) (*types.DeleteScriptResp, error) {
-	if userID <= 0 {
-		return nil, errorn.New(http.StatusBadRequest, "invalid user id")
-	}
-	if req == nil || req.ID == "" {
+	if req == nil {
 		return nil, errorn.New(http.StatusBadRequest, "task id is required")
 	}
 
-	task, err := l.svc.ScriptTaskModel.FindByTaskID(l.c, req.ID)
+	task, err := findOwnedScriptTask(l.c, l.svc, userID, req.ID)
 	if err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			return nil, errorn.New(http.StatusNotFound, "script task not found")
-		}
 		return nil, err
-	}
-	if task.UserID != userID {
-		return nil, errorn.New(http.StatusNotFound, "script task not found")
 	}
 	if task.Status != "succeeded" && task.Status != "failed" {
 		return nil, errorn.New(http.StatusConflict, "only completed or failed works can be deleted")

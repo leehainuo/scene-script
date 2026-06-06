@@ -2,10 +2,8 @@ package script
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
-	"scene-script/internal/model"
 	"scene-script/internal/service"
 	"scene-script/internal/svc"
 	"scene-script/internal/types"
@@ -35,15 +33,9 @@ func (l *WatchScriptEventsLogic) Snapshot(userID int64, req *types.GetScriptReq)
 		return nil, errorn.New(http.StatusBadRequest, "task id is required")
 	}
 
-	task, err := l.svc.ScriptTaskModel.FindByTaskID(l.c, req.ID)
+	task, err := findOwnedScriptTask(l.c, l.svc, userID, req.ID)
 	if err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			return nil, errorn.New(http.StatusNotFound, "script task not found")
-		}
 		return nil, err
-	}
-	if task.UserID != userID {
-		return nil, errorn.New(http.StatusNotFound, "script task not found")
 	}
 
 	event := service.SnapshotTaskEvent(task)
