@@ -40,40 +40,40 @@ llm:
   api:
     key: "your-qwen-api-key-here"
     endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    model: "qwen-plus"
+    model: "qwen3.6-flash"
     timeout_seconds: 120
-    max_tokens: 4096
-    top_p: 0.8
-    temperature: 0.7
+    max_tokens: 6144
+    top_p: 0.7
+    temperature: 0.2
   prompt:
-    system: "你是一位资深编剧，擅长将小说改编为结构化剧本。你必须只输出 YAML，不得输出解释、代码块围栏或额外说明。"
-    repair_system: "你是一位剧本 YAML 修复专家。你只能修复 YAML 结构和缺失字段，必须保持原故事语义尽量不变，只返回修复后的 YAML 正文。"
-    max_repair_attempts: 1
+    system: "你是一名擅长小说改编的结构化剧本引擎。你的唯一任务是输出可被 YAML 解析器直接解析的合法 YAML。禁止解释、禁止分析、禁止 Markdown 代码块、禁止任何 YAML 之外的文本。"
+    repair_system: "你是一位剧本 YAML 修复专家。你必须优先保证 YAML 可解析、结构完整、字段类型正确；若原结果疑似截断，必须丢弃残缺尾部并从头重写一份更紧凑的完整 YAML。只返回 YAML 正文。"
+    max_repair_attempts: 2
     template: |
-      根据以下小说文本，生成结构化剧本。
+      任务：把以下小说章节改编为结构化剧本 YAML。
       
-      体裁: {genre}
-      语气: {tone}
-      节奏: {pacing}
+      输入设定：
+      - 体裁：{genre}
+      - 语气：{tone}
+      - 节奏：{pacing}
+      - 源章节数：{source_chapters}
       
-      小说内容:
+      章节内容：
       {chapters_text}
       
-      请返回严格符合 YAML Schema v1.0 的剧本，必须包含：
-      - version: "1.0"
-      - metadata
-      - dramatis_personae
-      - settings
-      - chapters
-      - consistency_report
+      输出目标：
+      - 只输出一份完整、可解析、可校验的 YAML
+      - 必须覆盖所有输入章节，不得遗漏章节
+      - 优先保证结构完整和字段合法，其次再追求细节丰富
       
       约束：
-      - 只能返回 YAML 正文，禁止 Markdown 代码块和解释文字
+      - 禁止输出 Markdown 代码块、解释文字、前后说明
       - metadata.genre、metadata.tone、metadata.pacing 必须与输入一致
-      - beats.type 只能是 action、dialogue、inner、exposition
-      - dialogue 和 inner 类型必须提供 dialogue.speaker 与 dialogue.content
+      - 所有 YAML 列表字段必须使用 sequence，不得把数组写成字符串
+      - 长文本优先使用 block scalar（|-），避免引号转义错误
+      - 当章节数较多时，主动压缩 scenes 和 beats 数量，避免输出过长导致截断
     repair_template: |
-      你之前生成的剧本 YAML 没有通过系统校验，请严格修复下列问题并重新输出完整 YAML。
+      你之前生成的剧本 YAML 没有通过系统校验，请重新输出完整 YAML。
       
       输入约束：
       - 源章节数必须为 {source_chapters}
@@ -89,6 +89,8 @@ llm:
       - beats.type 只能是 action/dialogue/inner/exposition
       - dialogue 和 inner 类型必须提供 dialogue.speaker 与 dialogue.content
       - 必须补齐 metadata、dramatis_personae、settings、chapters、consistency_report
+      - 如果原结果疑似截断或尾部损坏，禁止续写半截内容，必须从头重写完整 YAML
+      - 修复时优先保证 YAML 可解析、结构完整、字段类型正确
       
       校验失败信息：
       {validation_errors}

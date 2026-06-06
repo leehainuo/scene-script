@@ -14,7 +14,9 @@ import {
   extractErrorMessage,
   GENERATION_STEPS,
   getGenerationStepText,
+  MAX_SOURCE_CHAPTERS,
   makeResultFromDetail,
+  MIN_SOURCE_CHAPTERS,
   STATUS_FILTER_OPTIONS,
 } from "@/lib/script-workshop"
 import type {
@@ -295,8 +297,12 @@ export function useScriptWorkshopTasks({
       text: chapter.text.trim(),
     }))
 
-    if (trimmedChapters.length < 3) {
-      toast.error("至少需要输入 3 个章节内容。")
+    if (trimmedChapters.length < MIN_SOURCE_CHAPTERS) {
+      toast.error(`章节不足 ${MIN_SOURCE_CHAPTERS} 章，无法发起转换。`)
+      return
+    }
+    if (trimmedChapters.length > MAX_SOURCE_CHAPTERS) {
+      toast.error(`单次上限 ${MAX_SOURCE_CHAPTERS} 章，长篇请拆分多任务后再生成。`)
       return
     }
     if (trimmedChapters.some((chapter) => !chapter.title || !chapter.text)) {

@@ -3,7 +3,14 @@ import { ChevronDown, Check, FileUp, LoaderCircle, RefreshCw, Trash2, Wand2 } fr
 import { StudioPanel } from "@/components/studio/studio-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { formatTextCount, GENRE_OPTIONS, PACING_OPTIONS, TONE_OPTIONS, WORKSPACE_DRAFT_FORM_ID } from "@/lib/script-workshop"
+import {
+  formatTextCount,
+  GENRE_OPTIONS,
+  MAX_SOURCE_CHAPTERS,
+  PACING_OPTIONS,
+  TONE_OPTIONS,
+  WORKSPACE_DRAFT_FORM_ID,
+} from "@/lib/script-workshop"
 import type { ImportedChapterDraft, Pacing, WorkspaceInputMode } from "@/lib/script-workshop"
 import { cn } from "@/lib/utils"
 import type { ScriptChapterInput, ScriptConvertRequest } from "@/types"
@@ -30,6 +37,7 @@ type WorkspaceViewProps = {
   chapterSummaries: ChapterSummary[]
   activeChapterSummary: ChapterSummary | undefined
   addChapter: () => void
+  canAddChapter: boolean
   updateChapter: (index: number, field: keyof ScriptChapterInput, value: string) => void
   canSubmitDraft: boolean
   isSubmitting: boolean
@@ -67,6 +75,7 @@ export function WorkspaceView({
   chapterSummaries,
   activeChapterSummary,
   addChapter,
+  canAddChapter,
   updateChapter,
   canSubmitDraft,
   isSubmitting,
@@ -267,11 +276,14 @@ export function WorkspaceView({
                     <button
                       type="button"
                       onClick={addChapter}
-                      className="rounded-[22px] border border-dashed border-black/10 bg-white px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50"
+                      disabled={!canAddChapter}
+                      className="rounded-[22px] border border-dashed border-black/10 bg-white px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <p className="text-xs uppercase tracking-[0.18em] text-slate-400">扩展输入</p>
                       <p className="mt-3 font-medium text-slate-700">+ 新增章节</p>
-                      <p className="mt-1 text-xs text-slate-400">继续补充更多章节内容</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {canAddChapter ? "继续补充更多章节内容" : `已达到 ${MAX_SOURCE_CHAPTERS} 章上限`}
+                      </p>
                     </button>
                   </div>
                 ) : (
@@ -360,11 +372,16 @@ export function WorkspaceView({
                         <button
                           type="button"
                           onClick={handleAddImportedChapter}
-                          className="rounded-[22px] border border-dashed border-black/10 bg-white px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50"
+                          disabled={importedChapters.length >= MAX_SOURCE_CHAPTERS}
+                          className="rounded-[22px] border border-dashed border-black/10 bg-white px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <p className="text-xs uppercase tracking-[0.18em] text-slate-400">拆章扩展</p>
                           <p className="mt-3 font-medium text-slate-700">+ 新增章节</p>
-                          <p className="mt-1 text-xs text-slate-400">继续补充或拆分更多章节</p>
+                          <p className="mt-1 text-xs text-slate-400">
+                            {importedChapters.length >= MAX_SOURCE_CHAPTERS
+                              ? `已达到 ${MAX_SOURCE_CHAPTERS} 章上限`
+                              : "继续补充或拆分更多章节"}
+                          </p>
                         </button>
                       </div>
                     ) : null}
@@ -477,7 +494,7 @@ export function WorkspaceView({
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {["至少 3 章", "自动生成 YAML", "自动一致性质检", "历史结果可回载"].map((item) => (
+              {[`单次 ${MAX_SOURCE_CHAPTERS} 章封顶`, "至少 3 章", "自动生成 YAML", "自动一致性质检"].map((item) => (
                 <span
                   key={item}
                   className="rounded-full border border-black/8 bg-white px-3 py-1 text-xs text-slate-500"
@@ -565,4 +582,3 @@ export function WorkspaceView({
     </div>
   )
 }
-

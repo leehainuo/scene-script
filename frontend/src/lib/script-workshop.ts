@@ -50,6 +50,8 @@ export type RenameConfirmState = {
 export type ImportedChapterDraft = ScriptChapterInput
 
 export const DRAFT_STORAGE_KEY = "script-workshop-draft"
+export const MIN_SOURCE_CHAPTERS = 3
+export const MAX_SOURCE_CHAPTERS = 12
 
 export const GENRE_OPTIONS = ["悬疑", "言情", "科幻", "现实主义", "奇幻", "其他"]
 export const TONE_OPTIONS = ["压抑", "轻松", "热血", "温暖", "冷峻", "诗意"]
