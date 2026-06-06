@@ -26,7 +26,9 @@ import {
   getChapterCompletionState,
   getStatusMeta,
   getTextCount,
+  MAX_SOURCE_CHAPTERS,
   makeResultFromDetail,
+  MIN_SOURCE_CHAPTERS,
   replaceLiteralText,
   validateEditableDocument,
 } from "@/lib/script-workshop"
@@ -161,6 +163,10 @@ export default function ScriptWorkshopPage() {
   }
 
   function addChapter() {
+    if (draft.chapters.length >= MAX_SOURCE_CHAPTERS) {
+      toast.error(`单次最多添加 ${MAX_SOURCE_CHAPTERS} 章，请拆分为多任务处理。`)
+      return
+    }
     setDraft((prev) => ({
       ...prev,
       chapters: [
@@ -550,6 +556,12 @@ export default function ScriptWorkshopPage() {
 
     setImportedChapters(chapters)
     setActiveImportedChapterIndex(0)
+    if (chapters.length > MAX_SOURCE_CHAPTERS) {
+      toast.error(
+        `当前识别出 ${chapters.length} 章，单次最多支持 ${MAX_SOURCE_CHAPTERS} 章，请先在这里删减或拆分后再导入。`
+      )
+      return
+    }
     if (chapters.length < 2) {
       toast.error("未识别到明确章节标题，已按段落结构给出拆分初稿，请确认后再导入。")
       return
@@ -597,6 +609,10 @@ export default function ScriptWorkshopPage() {
   }
 
   function handleAddImportedChapter() {
+    if (importedChapters.length >= MAX_SOURCE_CHAPTERS) {
+      toast.error(`单次最多保留 ${MAX_SOURCE_CHAPTERS} 章，请拆分为多任务处理。`)
+      return
+    }
     setImportedChapters((current) => {
       const next = [...current, { title: `第 ${current.length + 1} 章`, text: "" }]
       setActiveImportedChapterIndex(next.length - 1)
@@ -622,6 +638,10 @@ export default function ScriptWorkshopPage() {
 
     if (normalized.length === 0) {
       toast.error("请至少保留一章内容后再导入。")
+      return
+    }
+    if (normalized.length > MAX_SOURCE_CHAPTERS) {
+      toast.error(`单次上限 ${MAX_SOURCE_CHAPTERS} 章，请先删减到 ${MAX_SOURCE_CHAPTERS} 章以内再导入。`)
       return
     }
 
@@ -792,18 +812,25 @@ export default function ScriptWorkshopPage() {
     (chapter) => chapter.completionState === "ready"
   ).length
   const incompleteChaptersCount = chapterSummaries.length - completedChaptersCount
-  const canSubmitDraft = draft.chapters.length >= 3 && incompleteChaptersCount === 0
+  const canSubmitDraft =
+    draft.chapters.length >= MIN_SOURCE_CHAPTERS &&
+    draft.chapters.length <= MAX_SOURCE_CHAPTERS &&
+    incompleteChaptersCount === 0
   const activeChapterSummary = chapterSummaries[activeChapterIndex] ?? chapterSummaries[0]
   const activeImportedChapter =
     importedChapters[activeImportedChapterIndex] ?? importedChapters[0] ?? null
   const activeImportedChapterSummary =
     importedChapterSummaries[activeImportedChapterIndex] ?? importedChapterSummaries[0]
   const workspaceProgressText =
-    draft.chapters.length < 3
-      ? `至少需要 3 章内容。当前已有 ${draft.chapters.length} 章，还差 ${3 - draft.chapters.length} 章。`
-      : canSubmitDraft
-        ? `已完成 ${completedChaptersCount}/${draft.chapters.length} 章，可以直接开始生成。`
-        : `已有 ${draft.chapters.length} 章草稿，但仍有 ${incompleteChaptersCount} 章缺少标题或正文。`
+    draft.chapters.length < MIN_SOURCE_CHAPTERS
+      ? `已添加：${draft.chapters.length}/${MAX_SOURCE_CHAPTERS} ｜最少需${MIN_SOURCE_CHAPTERS}章节，还差 ${
+          MIN_SOURCE_CHAPTERS - draft.chapters.length
+        } 章。`
+      : draft.chapters.length > MAX_SOURCE_CHAPTERS
+        ? `已添加：${draft.chapters.length}/${MAX_SOURCE_CHAPTERS} ｜最少需${MIN_SOURCE_CHAPTERS}章节，已超出单次上限，请拆分多任务。`
+        : canSubmitDraft
+          ? `已添加：${draft.chapters.length}/${MAX_SOURCE_CHAPTERS} ｜最少需${MIN_SOURCE_CHAPTERS}章节，已完成 ${completedChaptersCount}/${draft.chapters.length} 章，可以直接开始生成。`
+          : `已添加：${draft.chapters.length}/${MAX_SOURCE_CHAPTERS} ｜最少需${MIN_SOURCE_CHAPTERS}章节，仍有 ${incompleteChaptersCount} 章缺少标题或正文。`
   const importProgressText =
     importSourceTextCount === 0
       ? "适合一次粘贴整篇小说，再统一拆章和校对。"
@@ -940,6 +967,7 @@ export default function ScriptWorkshopPage() {
                 chapterSummaries={chapterSummaries}
                 activeChapterSummary={activeChapterSummary}
                 addChapter={addChapter}
+                canAddChapter={draft.chapters.length < MAX_SOURCE_CHAPTERS}
                 updateChapter={updateChapter}
                 canSubmitDraft={canSubmitDraft}
                 isSubmitting={isSubmitting}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -156,10 +157,37 @@ func TestBuildPrompt(t *testing.T) {
 	}
 
 	prompt := converter.buildPrompt(req)
-	for _, want := range []string{"悬疑", "压抑", "medium", "第一章"} {
+	for _, want := range []string{
+		"悬疑",
+		"压抑",
+		"medium",
+		"第一章",
+		"traits 和 relations 必须是 YAML sequence",
+		`错误示例：traits: "敏锐、孤勇、理性中存有共情"`,
+	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q: %s", want, prompt)
 		}
+	}
+}
+
+func TestBuildPromptIncludesCompactBudgetForTwelveChapters(t *testing.T) {
+	converter := testConverter(t, "")
+	req := ConvertRequest{
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+	for i := 0; i < 12; i++ {
+		req.Chapters = append(req.Chapters, ChapterInput{
+			Title: fmt.Sprintf("第%d章", i+1),
+			Text:  "章节摘要",
+		})
+	}
+
+	prompt := converter.buildPrompt(req)
+	if !strings.Contains(prompt, "当源章节数为 9~12 章时，必须使用紧凑输出") {
+		t.Fatalf("expected compact budget rule in prompt, got %s", prompt)
 	}
 }
 
@@ -260,6 +288,48 @@ func TestSanitizeQuotedYAMLTextConvertsBrokenQuotedSummary(t *testing.T) {
 	}
 }
 
+func TestSanitizeKnownSequenceScalarsConvertsCharacterFields(t *testing.T) {
+	raw := "dramatis_personae:\n  - name: \"苏晚\"\n    archetype: \"调查者\"\n    motivation: \"搜集怪谈素材，揭开异常现象背后的真相\"\n    traits: \"敏锐、孤勇、理性中存有共情\"\n    relations: \"与陈阿婆构成记忆与遗愿的镜像关系\"\n    first_appearance: \"ch1\"\n"
+
+	sanitized := sanitizeKnownSequenceScalars(raw)
+
+	for _, want := range []string{
+		"traits:",
+		`- "敏锐"`,
+		`- "孤勇"`,
+		`- "理性中存有共情"`,
+		"relations:",
+		`- "与陈阿婆构成记忆与遗愿的镜像关系"`,
+	} {
+		if !strings.Contains(sanitized, want) {
+			t.Fatalf("expected sanitized yaml to contain %q, got %s", want, sanitized)
+		}
+	}
+}
+
+func TestValidateRequestRejectsTooManyChapters(t *testing.T) {
+	converter := testConverter(t, "")
+	req := ConvertRequest{
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+	for i := 0; i < 13; i++ {
+		req.Chapters = append(req.Chapters, ChapterInput{
+			Title: fmt.Sprintf("第%d章", i+1),
+			Text:  "内容",
+		})
+	}
+
+	err := converter.validateRequest(req)
+	if err == nil {
+		t.Fatal("expected chapter count validation error")
+	}
+	if !strings.Contains(err.Error(), "between 3 and 12") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestBuildInitialTaskTitle(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -339,6 +409,21 @@ func TestShouldUseLongFormMode(t *testing.T) {
 	if !converter.shouldUseLongFormMode(longReq) {
 		t.Fatal("expected long request to use long form mode")
 	}
+
+	manyChaptersReq := ConvertRequest{
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+	for i := 0; i < 8; i++ {
+		manyChaptersReq.Chapters = append(manyChaptersReq.Chapters, ChapterInput{
+			Title: fmt.Sprintf("第%d章", i+1),
+			Text:  strings.Repeat("中等长度正文。", 100),
+		})
+	}
+	if !converter.shouldUseLongFormMode(manyChaptersReq) {
+		t.Fatal("expected 8 chapters request to use long form mode")
+	}
 }
 
 func TestConvertWithLongFormSummarization(t *testing.T) {
@@ -387,5 +472,27 @@ func TestConvertWithLongFormSummarization(t *testing.T) {
 	}
 	if result.Summary.Chapters != 3 {
 		t.Fatalf("unexpected summary: %#v", result.Summary)
+	}
+}
+
+func TestRepairPromptFlagsTruncation(t *testing.T) {
+	pm := NewPromptManager(&config.LLMPromptConf{})
+	req := ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: "章节标题：第一章\n线索出现。"},
+			{Title: "第二章", Text: "章节标题：第二章\n调查升级。"},
+			{Title: "第三章", Text: "章节标题：第三章\n危险逼近。"},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+
+	_, prompt := pm.RepairPrompt(req, "chapters:\n  - id: \"", fmt.Errorf("yaml parse failed: could not find end character of double-quoted text"), 1)
+	if !strings.Contains(prompt, "本次失败更接近“输出被截断”") {
+		t.Fatalf("expected truncation strategy in repair prompt, got %s", prompt)
+	}
+	if !strings.Contains(prompt, "用于必要时从头重写的章节输入") {
+		t.Fatalf("expected chapter input context in repair prompt, got %s", prompt)
 	}
 }

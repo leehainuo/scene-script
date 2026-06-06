@@ -12,7 +12,7 @@ type ConvertScriptChapter struct {
 }
 
 type ConvertScriptReq struct {
-	Chapters []ConvertScriptChapter `json:"chapters" validate:"required,min=3,dive"`
+	Chapters []ConvertScriptChapter `json:"chapters" validate:"required,min=3,max=12,dive"`
 	Genre    string                 `json:"genre" validate:"required,max=64"`
 	Tone     string                 `json:"tone" validate:"required,max=64"`
 	Pacing   string                 `json:"pacing" validate:"required,oneof=fast medium slow"`

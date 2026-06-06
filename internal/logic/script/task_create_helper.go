@@ -13,9 +13,14 @@ import (
 	"scene-script/pkg/stores/sqlx"
 )
 
+const (
+	minConvertChapters = 3
+	maxConvertChapters = 12
+)
+
 func validateConvertScriptReq(req *types.ConvertScriptReq) error {
-	if len(req.Chapters) < 3 {
-		return errorn.New(http.StatusBadRequest, "minimum 3 chapters required")
+	if len(req.Chapters) < minConvertChapters || len(req.Chapters) > maxConvertChapters {
+		return errorn.New(http.StatusBadRequest, "chapter count must be between 3 and 12")
 	}
 	if req.Genre == "" || req.Tone == "" || req.Pacing == "" {
 		return errorn.New(http.StatusBadRequest, "genre, tone, and pacing are required")
