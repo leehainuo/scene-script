@@ -11,7 +11,7 @@ import (
 
 const defaultConvertSystemPrompt = "你是一名擅长小说改编的结构化剧本引擎。你的唯一任务是输出可被 YAML 解析器直接解析的合法 YAML。禁止解释、禁止分析、禁止 Markdown 代码块、禁止任何 YAML 之外的文本。"
 const defaultSummarizeSystemPrompt = "你是一位小说改编策划助手。你需要在不丢失关键情节的前提下，将长章节压缩成适合后续剧本生成的结构化摘要，只输出纯文本，不要输出 YAML、JSON、Markdown 标题或额外解释。"
-const defaultStructuredSummarySystemPrompt = "你是一位小说改编信息抽取助手。你需要把章节内容压缩为稳定、忠实、可机读的结构化摘要，尽量减少后续剧本生成时的二次理解损耗。"
+const defaultStructuredSummarySystemPrompt = "你是一位小说改编信息抽取助手。你需要把章节内容压缩为稳定、忠实、可机读的结构化摘要，并且必须只输出一个合法的 JSON object，不能输出 JSON 之外的任何文本。"
 
 const defaultRepairSystemPrompt = "你是一位剧本 YAML 修复专家。你必须优先保证 YAML 可解析、结构完整、字段类型正确；若原结果疑似截断，必须丢弃残缺尾部并从头重写一份更紧凑的完整 YAML。只返回 YAML 正文。"
 
@@ -132,6 +132,10 @@ func (pm *PromptManager) ChapterSummaryStructuredPrompt(req ConvertRequest, chap
 	systemPrompt = defaultStructuredSummarySystemPrompt
 	userPrompt = fmt.Sprintf(`请从下面章节中提炼结构化摘要，用于后续“小说转剧本”生成。
 
+你必须只返回一个 JSON object。
+返回内容必须是合法 JSON。
+禁止输出解释、前后缀、Markdown 代码块或任何非 JSON 文本。
+
 字段要求：
 - chapter_title：章节标题，保持与原章节一致
 - characters：关键人物名称数组，只保留会影响本章改编的人物
@@ -148,6 +152,8 @@ func (pm *PromptManager) ChapterSummaryStructuredPrompt(req ConvertRequest, chap
 - plot_points/conflicts/foreshadowing 使用短句，不要写成长段
 - ending_state 保持单句、简洁、可直接复用
 - 目标信息密度约等于 %d 字的高密度摘要
+- 如果某个数组字段没有可靠信息，返回空数组 [] 
+- 输出字段名必须严格使用这些 JSON keys：chapter_title, characters, locations, plot_points, conflicts, foreshadowing, ending_state
 
 改编设定：
 - 体裁：%s

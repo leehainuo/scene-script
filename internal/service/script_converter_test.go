@@ -265,6 +265,31 @@ func TestChapterSummaryPromptUsesStructuredSections(t *testing.T) {
 	}
 }
 
+func TestChapterSummaryStructuredPromptExplicitlyRequiresJSON(t *testing.T) {
+	pm := NewPromptManager(&config.LLMPromptConf{})
+	req := ConvertRequest{
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+
+	systemPrompt, userPrompt := pm.ChapterSummaryStructuredPrompt(req, ChapterInput{
+		Title: "第一章",
+		Text:  "张三回到旧宅，发现旧钥匙。",
+	}, 0, 500)
+
+	for _, want := range []string{
+		"JSON object",
+		"合法 JSON",
+		"只返回一个 JSON object",
+		"chapter_title, characters, locations, plot_points, conflicts, foreshadowing, ending_state",
+	} {
+		if !strings.Contains(systemPrompt, want) && !strings.Contains(userPrompt, want) {
+			t.Fatalf("expected structured summary prompts to contain %q, system=%s user=%s", want, systemPrompt, userPrompt)
+		}
+	}
+}
+
 func TestConvertSanitizesAndNormalizesYAML(t *testing.T) {
 	raw := "```yaml\nversion: \"1.0\"\nmetadata:\n  title: \"测试小说\"\n  author: \"作者甲\"\n  genre: \"悬疑\"\n  tone: \"压抑\"\n  pacing: \"medium\"\n  source_chapters: 3\n  generated_at: \"2025-06-05T12:30:00Z\"\ndramatis_personae:\n  - name: \"张三\"\n    archetype: \"主角\"\n    motivation: \"调查真相\"\n    traits: [\"冷静\"]\n    relations: []\n    first_appearance: \"Chapter 1\"\nsettings:\n  - name: \"旧宅\"\n    description: \"年久失修的老房子\"\n    importance: \"high\"\nchapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"张三来到旧宅，发现“神秘钥匙”。\"\n    scenes:\n      - id: \"ch1.sc1\"\n        title: \"到达旧宅\"\n        goal: \"张三进入旧宅\"\n        location: \"旧宅\"\n        time: \"Night\"\n        pov: \"张三\"\n        mood: \"紧张\"\n        beats:\n          - id: \"ch1.sc1.b1\"\n            type: \"dialogue\"\n            summary: \"张三自语\"\n            dialogue:\n              speaker: \"张三\"\n              content: \"线索就在这里。\"\n        outcome: \"张三带着线索离开旧宅。\"\n  - id: \"ch2\"\n    title: \"第二章\"\n    summary: \"张三研究钥匙。\"\n    scenes: []\n  - id: \"ch3\"\n    title: \"第三章\"\n    summary: \"张三准备行动。\"\n    scenes: []\nconsistency_report:\n  roles_missing: []\n  settings_missing: []\n  dangling_refs: []\n```"
 	converter := testConverter(t, raw)
