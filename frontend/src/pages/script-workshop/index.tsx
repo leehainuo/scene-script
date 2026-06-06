@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { CircleCheckBig, FileText, LayoutGrid, Wand2 } from "lucide-react"
-import { FloatingSaveButton } from "@/components/script-workshop/floating-save-button"
-import { GenerationOverlay } from "@/components/script-workshop/generation-overlay"
-import { RenameConfirmDialog } from "@/components/script-workshop/rename-confirm-dialog"
+import { FloatingSaveButton } from "@/pages/script-workshop/components/floating-save-button"
+import { GenerationOverlay } from "@/pages/script-workshop/components/generation-overlay"
+import { RenameConfirmDialog } from "@/pages/script-workshop/components/rename-confirm-dialog"
 import { AppSidebar } from "@/components/studio/app-sidebar"
 import {
   buildScriptConsistency,
@@ -13,6 +13,7 @@ import {
   serializeScriptYaml,
 } from "@/lib/script-yaml"
 import {
+  buildChapterSummaries,
   buildSemanticTree,
   createDefaultDraft,
   DRAFT_STORAGE_KEY,
@@ -23,13 +24,12 @@ import {
   formatSchemaValidationMessage,
   formatTextCount,
   GENERATION_STEPS,
-  getChapterCompletionState,
   getStatusMeta,
-  getTextCount,
   MAX_SOURCE_CHAPTERS,
   makeResultFromDetail,
   MIN_SOURCE_CHAPTERS,
-  replaceLiteralText,
+  renameCharacterReferences,
+  renameSettingReferences,
   validateEditableDocument,
 } from "@/lib/script-workshop"
 import type {
@@ -309,93 +309,6 @@ export default function ScriptWorkshopPage() {
       settings: current.settings.map((setting, index) =>
         index === settingIndex ? updater(setting) : setting
       ),
-    }))
-  }
-
-  function renameCharacterReferences(oldName: string, nextName: string) {
-    const previous = oldName.trim()
-    const currentName = nextName.trim()
-    if (!previous || !currentName || previous === currentName) {
-      return
-    }
-
-    applyDocumentUpdate((current) => ({
-      ...current,
-      chapters: current.chapters.map((chapter) => ({
-        ...chapter,
-        summary: replaceLiteralText(chapter.summary, previous, currentName),
-        scenes: chapter.scenes.map((scene) => ({
-          ...scene,
-          pov: scene.pov === previous ? currentName : scene.pov,
-          goal: replaceLiteralText(scene.goal, previous, currentName),
-          outcome: replaceLiteralText(scene.outcome, previous, currentName),
-          beats: scene.beats.map((beat) =>
-            beat.dialogue?.speaker === previous
-              ? {
-                  ...beat,
-                  summary: replaceLiteralText(beat.summary, previous, currentName),
-                  dialogue: {
-                    speaker: currentName,
-                    content: replaceLiteralText(
-                      beat.dialogue.content,
-                      previous,
-                      currentName
-                    ),
-                  },
-                }
-              : {
-                  ...beat,
-                  summary: replaceLiteralText(beat.summary, previous, currentName),
-                  dialogue: beat.dialogue
-                    ? {
-                        speaker: beat.dialogue.speaker,
-                        content: replaceLiteralText(
-                          beat.dialogue.content,
-                          previous,
-                          currentName
-                        ),
-                      }
-                    : beat.dialogue,
-                }
-          ),
-        })),
-      })),
-    }))
-  }
-
-  function renameSettingReferences(oldName: string, nextName: string) {
-    const previous = oldName.trim()
-    const currentName = nextName.trim()
-    if (!previous || !currentName || previous === currentName) {
-      return
-    }
-
-    applyDocumentUpdate((current) => ({
-      ...current,
-      chapters: current.chapters.map((chapter) => ({
-        ...chapter,
-        summary: replaceLiteralText(chapter.summary, previous, currentName),
-        scenes: chapter.scenes.map((scene) => ({
-          ...scene,
-          location: scene.location === previous ? currentName : scene.location,
-          goal: replaceLiteralText(scene.goal, previous, currentName),
-          outcome: replaceLiteralText(scene.outcome, previous, currentName),
-          beats: scene.beats.map((beat) => ({
-            ...beat,
-            summary: replaceLiteralText(beat.summary, previous, currentName),
-            dialogue: beat.dialogue
-              ? {
-                  speaker: beat.dialogue.speaker,
-                  content: replaceLiteralText(
-                    beat.dialogue.content,
-                    previous,
-                    currentName
-                  ),
-                }
-              : beat.dialogue,
-          })),
-        })),
-      })),
     }))
   }
 
@@ -799,57 +712,13 @@ export default function ScriptWorkshopPage() {
       }
 
   const activeChapter = draft.chapters[activeChapterIndex] ?? draft.chapters[0]
-  const importSourceTextCount = getTextCount(importSourceText)
+  const importSourceTextCount = importSourceText.trim().replace(/\s+/g, "").length
   const importedChapterSummaries = useMemo(
-    () =>
-      importedChapters.map((chapter, index) => {
-        const completionState = getChapterCompletionState(chapter)
-        const textCount = getTextCount(chapter.text)
-        return {
-          index,
-          title: chapter.title.trim() || `第 ${index + 1} 章`,
-          textCount,
-          completionState,
-          statusLabel:
-            completionState === "ready"
-              ? "可导入"
-              : completionState === "partial"
-                ? "待补全"
-                : "未开始",
-          detailLabel:
-            completionState === "ready"
-              ? formatTextCount(textCount)
-              : completionState === "partial"
-                ? "缺标题或正文"
-                : "等待输入",
-        }
-      }),
+    () => buildChapterSummaries(importedChapters, "可导入"),
     [importedChapters]
   )
   const chapterSummaries = useMemo(
-    () =>
-      draft.chapters.map((chapter, index) => {
-        const completionState = getChapterCompletionState(chapter)
-        const textCount = getTextCount(chapter.text)
-        return {
-          index,
-          title: chapter.title.trim() || `第 ${index + 1} 章`,
-          textCount,
-          completionState,
-          statusLabel:
-            completionState === "ready"
-              ? "可生成"
-              : completionState === "partial"
-                ? "待补全"
-                : "未开始",
-          detailLabel:
-            completionState === "ready"
-              ? formatTextCount(textCount)
-              : completionState === "partial"
-                ? "缺标题或正文"
-                : "等待输入",
-        }
-      }),
+    () => buildChapterSummaries(draft.chapters, "可生成"),
     [draft.chapters]
   )
   const completedChaptersCount = chapterSummaries.filter(
@@ -1129,9 +998,13 @@ export default function ScriptWorkshopPage() {
             return
           }
           if (renameConfirm.kind === "characters") {
-            renameCharacterReferences(renameConfirm.previousName, renameConfirm.nextName)
+            applyDocumentUpdate((current) =>
+              renameCharacterReferences(current, renameConfirm.previousName, renameConfirm.nextName)
+            )
           } else {
-            renameSettingReferences(renameConfirm.previousName, renameConfirm.nextName)
+            applyDocumentUpdate((current) =>
+              renameSettingReferences(current, renameConfirm.previousName, renameConfirm.nextName)
+            )
           }
           setRenameConfirm(null)
         }}

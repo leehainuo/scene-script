@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
-export function StudioPanel({
+export function SectionPanel({
   eyebrow,
   title,
   description,
@@ -35,9 +35,7 @@ export function StudioPanel({
       <div className="flex items-start justify-between gap-4 border-b border-black/5 px-5 py-4">
         <div className="space-y-1.5">
           {eyebrow ? (
-            <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">
-              {eyebrow}
-            </p>
+            <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">{eyebrow}</p>
           ) : null}
           <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
           {description ? (

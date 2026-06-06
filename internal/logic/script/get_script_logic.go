@@ -31,22 +31,13 @@ func NewGetScriptLogic(c context.Context, svc *svc.ServiceContext) *GetScriptLog
 
 // Get - Return task detail scoped to the authenticated user.
 func (l *GetScriptLogic) Get(userID int64, req *types.GetScriptReq) (*types.GetScriptResp, error) {
-	if userID <= 0 {
-		return nil, errorn.New(http.StatusBadRequest, "invalid user id")
-	}
-	if req == nil || req.ID == "" {
+	if req == nil {
 		return nil, errorn.New(http.StatusBadRequest, "task id is required")
 	}
 
-	task, err := l.svc.ScriptTaskModel.FindByTaskID(l.c, req.ID)
+	task, err := findOwnedScriptTask(l.c, l.svc, userID, req.ID)
 	if err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			return nil, errorn.New(http.StatusNotFound, "script task not found")
-		}
 		return nil, err
-	}
-	if task.UserID != userID {
-		return nil, errorn.New(http.StatusNotFound, "script task not found")
 	}
 
 	summary := model.ScriptSummary{}

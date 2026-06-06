@@ -590,14 +590,21 @@ func totalChapterChars(chapters []ChapterInput) int {
 
 // NormalizeEditedYAML validates and normalizes user-edited YAML against the
 // persisted task metadata so edited results can be safely stored.
-func (sc *ScriptConverter) NormalizeEditedYAML(rawYAML string, genre, tone, pacing string, sourceChapters int) (*ConvertResult, error) {
+func (sc *ScriptConverter) NormalizeEditedYAML(
+	ctx context.Context,
+	rawYAML string,
+	genre,
+	tone,
+	pacing string,
+	sourceChapters int,
+) (*ConvertResult, error) {
 	req := ConvertRequest{
 		Chapters: make([]ChapterInput, sourceChapters),
 		Genre:    genre,
 		Tone:     tone,
 		Pacing:   pacing,
 	}
-	return sc.normalizeAndValidate(context.Background(), req, rawYAML)
+	return sc.normalizeAndValidate(ctx, req, rawYAML)
 }
 
 // RewriteScene rewrites a single scene while preserving the surrounding YAML structure.
@@ -657,6 +664,7 @@ func (sc *ScriptConverter) RewriteScene(ctx context.Context, req SceneRewriteReq
 	}
 
 	result, err := sc.NormalizeEditedYAML(
+		ctx,
 		string(mergedYAML),
 		req.Source.Genre,
 		req.Source.Tone,

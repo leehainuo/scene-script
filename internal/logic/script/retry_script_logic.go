@@ -2,13 +2,11 @@ package script
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
 
 	"go.uber.org/zap"
 
-	"scene-script/internal/model"
 	"scene-script/internal/service"
 	"scene-script/internal/svc"
 	"scene-script/internal/types"
@@ -31,22 +29,13 @@ func NewRetryScriptLogic(c context.Context, svc *svc.ServiceContext) *RetryScrip
 }
 
 func (l *RetryScriptLogic) Retry(userID int64, req *types.RetryScriptReq) (*types.ConvertScriptResp, error) {
-	if userID <= 0 {
-		return nil, errorn.New(http.StatusBadRequest, "invalid user id")
-	}
-	if req == nil || req.ID == "" {
+	if req == nil {
 		return nil, errorn.New(http.StatusBadRequest, "task id is required")
 	}
 
-	failedTask, err := l.svc.ScriptTaskModel.FindByTaskID(l.c, req.ID)
+	failedTask, err := findOwnedScriptTask(l.c, l.svc, userID, req.ID)
 	if err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			return nil, errorn.New(http.StatusNotFound, "script task not found")
-		}
 		return nil, err
-	}
-	if failedTask.UserID != userID {
-		return nil, errorn.New(http.StatusNotFound, "script task not found")
 	}
 	if failedTask.Status != "failed" {
 		return nil, errorn.New(http.StatusConflict, "only failed works can be retried")
