@@ -66,6 +66,9 @@ const (
 	longFormTotalCharsThreshold    = 12000
 	longFormSingleChapterThreshold = 4500
 	longFormSummaryTargetChars     = 900
+	minConvertSourceChapters       = 3
+	maxConvertSourceChapters       = 12
+	longFormChapterCountThreshold  = 8
 )
 
 // NewScriptConverter - Create a new script converter.
@@ -223,6 +226,9 @@ func (sc *ScriptConverter) reportProgress(report ConvertProgressReporter, stage,
 }
 
 func (sc *ScriptConverter) shouldUseLongFormMode(req ConvertRequest) bool {
+	if len(req.Chapters) >= longFormChapterCountThreshold {
+		return true
+	}
 	if totalChapterChars(req.Chapters) >= longFormTotalCharsThreshold {
 		return true
 	}
@@ -243,8 +249,9 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 	}
 
 	usages := make([]*einoSchema.TokenUsage, 0, len(req.Chapters))
+	targetChars := summaryTargetChars(req)
 	for index, chapter := range req.Chapters {
-		systemPrompt, userPrompt := sc.promptManager.ChapterSummaryPrompt(req, chapter, index, longFormSummaryTargetChars)
+		systemPrompt, userPrompt := sc.promptManager.ChapterSummaryPrompt(req, chapter, index, targetChars)
 		resp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
 		if err != nil {
 			return ConvertRequest{}, nil, err
@@ -284,6 +291,17 @@ func normalizeChapterSummary(title, raw string) string {
 	return strings.Join(normalized, "\n")
 }
 
+func summaryTargetChars(req ConvertRequest) int {
+	switch {
+	case len(req.Chapters) >= 11:
+		return 500
+	case len(req.Chapters) >= 8:
+		return 650
+	default:
+		return longFormSummaryTargetChars
+	}
+}
+
 func totalChapterChars(chapters []ChapterInput) int {
 	total := 0
 	for _, chapter := range chapters {
@@ -305,8 +323,12 @@ func (sc *ScriptConverter) NormalizeEditedYAML(rawYAML string, genre, tone, paci
 }
 
 func (sc *ScriptConverter) validateRequest(req ConvertRequest) error {
-	if len(req.Chapters) < 3 {
-		return NewConvertError(ConvertErrorSchema, fmt.Sprintf("minimum 3 chapters required, got %d", len(req.Chapters)), nil)
+	if len(req.Chapters) < minConvertSourceChapters || len(req.Chapters) > maxConvertSourceChapters {
+		return NewConvertError(
+			ConvertErrorSchema,
+			fmt.Sprintf("chapter count must be between %d and %d, got %d", minConvertSourceChapters, maxConvertSourceChapters, len(req.Chapters)),
+			nil,
+		)
 	}
 	if strings.TrimSpace(req.Genre) == "" || strings.TrimSpace(req.Tone) == "" || strings.TrimSpace(req.Pacing) == "" {
 		return NewConvertError(ConvertErrorSchema, "genre, tone, and pacing are required", nil)
@@ -350,8 +372,141 @@ func sanitizeLLMOutput(raw string) string {
 	}
 
 	trimmed = sanitizeQuotedYAMLText(trimmed)
+	trimmed = sanitizeKnownSequenceScalars(trimmed)
 
 	return trimmed
+}
+
+func isLikelyTruncatedYAMLError(raw string, err error) bool {
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	if strings.Contains(message, "could not find end character of double-quoted text") {
+		return true
+	}
+	if strings.Contains(message, "did not find expected node content") || strings.Contains(message, "could not find expected ':'") {
+		return true
+	}
+
+	sanitized := sanitizeLLMOutput(raw)
+	lastLine := strings.TrimSpace(lastNonEmptyLine(sanitized))
+	switch {
+	case strings.HasSuffix(lastLine, `: "`),
+		strings.HasSuffix(lastLine, `: '`),
+		strings.HasSuffix(lastLine, `- id: "`),
+		strings.HasSuffix(lastLine, `- id:`),
+		strings.HasSuffix(lastLine, `dialogue:`),
+		strings.HasSuffix(lastLine, `beats:`):
+		return true
+	}
+
+	quoteCount := 0
+	escaped := false
+	for _, r := range sanitized {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			quoteCount++
+		}
+	}
+	return quoteCount%2 == 1
+}
+
+func lastNonEmptyLine(raw string) string {
+	lines := strings.Split(raw, "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		if strings.TrimSpace(lines[index]) != "" {
+			return lines[index]
+		}
+	}
+	return ""
+}
+
+var knownSequenceScalarRegexp = regexp.MustCompile(`^(\s*)(traits|relations|aliases|roles_missing|settings_missing|dangling_refs):\s*(.*?)\s*$`)
+
+func sanitizeKnownSequenceScalars(raw string) string {
+	lines := strings.Split(raw, "\n")
+	output := make([]string, 0, len(lines))
+	for _, line := range lines {
+		matches := knownSequenceScalarRegexp.FindStringSubmatch(line)
+		if len(matches) != 4 {
+			output = append(output, line)
+			continue
+		}
+
+		indent, key, value := matches[1], matches[2], strings.TrimSpace(matches[3])
+		if value == "" || value == "[]" || strings.HasPrefix(value, "[") || strings.HasPrefix(value, "|") || strings.HasPrefix(value, ">") {
+			output = append(output, line)
+			continue
+		}
+
+		items := sequenceScalarItems(key, value)
+		if len(items) == 0 {
+			output = append(output, fmt.Sprintf("%s%s: []", indent, key))
+			continue
+		}
+
+		output = append(output, fmt.Sprintf("%s%s:", indent, key))
+		itemIndent := indent + "  "
+		for _, item := range items {
+			output = append(output, fmt.Sprintf(`%s- "%s"`, itemIndent, escapeDoubleQuotedYAML(item)))
+		}
+	}
+	return strings.Join(output, "\n")
+}
+
+func sequenceScalarItems(key, value string) []string {
+	unquoted := strings.TrimSpace(trimQuotedScalarEdge(strings.TrimSpace(value)))
+	if unquoted == "" {
+		return nil
+	}
+
+	var rawItems []string
+	switch key {
+	case "traits", "aliases":
+		rawItems = splitSequenceScalar(unquoted)
+	default:
+		rawItems = []string{unquoted}
+		if strings.ContainsAny(unquoted, "，,；;|/、") {
+			rawItems = splitSequenceScalar(unquoted)
+		}
+	}
+
+	items := make([]string, 0, len(rawItems))
+	for _, item := range rawItems {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func splitSequenceScalar(value string) []string {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case '、', '，', ',', '；', ';', '|', '/', '\n':
+			return true
+		default:
+			return false
+		}
+	})
+	if len(fields) == 0 {
+		return []string{value}
+	}
+	return fields
+}
+
+func escapeDoubleQuotedYAML(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return replacer.Replace(value)
 }
 
 func sanitizeQuotedYAMLText(raw string) string {
