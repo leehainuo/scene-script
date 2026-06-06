@@ -248,24 +248,68 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 		Pacing:   req.Pacing,
 	}
 
+	structuredEnabled := false
+	if _, ok := sc.llm.(StructuredSummaryProvider); ok {
+		structuredEnabled = true
+	}
 	usages := make([]*einoSchema.TokenUsage, 0, len(req.Chapters))
 	targetChars := summaryTargetChars(req)
+	logn.Debug("script converter long form summary started",
+		TaskLogFields(ctx, "long_form_summary_started",
+			zap.Int("chapter_count", len(req.Chapters)),
+			zap.Int("target_chars", targetChars),
+			zap.Bool("structured_summary_enabled", structuredEnabled),
+		)...,
+	)
 	for index, chapter := range req.Chapters {
+		chapterStartedAt := time.Now()
+		chapterTitle := strings.TrimSpace(chapter.Title)
+		charCount := len([]rune(strings.TrimSpace(chapter.Text)))
+		finalMode := "text"
+		fallbackReason := ""
+
+		logn.Debug("script converter chapter summary started",
+			TaskLogFields(ctx, "long_form_chapter_summary_started",
+				zap.Int("chapter_index", index),
+				zap.String("chapter_title", chapterTitle),
+				zap.Int("source_char_count", charCount),
+				zap.Bool("structured_summary_enabled", structuredEnabled),
+			)...,
+		)
+
 		if structuredLLM, ok := sc.llm.(StructuredSummaryProvider); ok {
 			systemPrompt, userPrompt := sc.promptManager.ChapterSummaryStructuredPrompt(req, chapter, index, targetChars)
 			resp, err := structuredLLM.GenerateStructuredChapterSummary(ctx, systemPrompt, userPrompt)
 			if err == nil {
+				finalMode = "structured"
 				compressed.Chapters[index] = ChapterInput{
 					Title: chapter.Title,
 					Text:  normalizeStructuredChapterSummary(chapter.Title, resp.Summary),
 				}
 				usages = append(usages, resp.Usage)
+				logn.Debug("script converter chapter summary done",
+					TaskLogFields(ctx, "long_form_chapter_summary_done",
+						zap.Int("chapter_index", index),
+						zap.String("chapter_title", chapterTitle),
+						zap.String("summary_mode", finalMode),
+						zap.Int("source_char_count", charCount),
+						zap.Int("summary_char_count", len([]rune(compressed.Chapters[index].Text))),
+						zap.Int64("elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
+						zap.Bool("fallback_triggered", false),
+						zap.Any("usage", resp.Usage),
+					)...,
+				)
 				continue
 			}
+			fallbackReason = err.Error()
 			logn.Warn("structured summary generation failed, fallback to text summary",
 				TaskLogFields(ctx, "long_form_summary_fallback",
 					zap.Int("chapter_index", index),
-					zap.String("chapter_title", strings.TrimSpace(chapter.Title)),
+					zap.String("chapter_title", chapterTitle),
+					zap.Int("source_char_count", charCount),
+					zap.String("fallback_from", "structured"),
+					zap.String("fallback_to", "text"),
+					zap.Int64("structured_elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
 					zap.Error(err),
 				)...,
 			)
@@ -282,8 +326,29 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 			Text:  normalizeChapterSummary(chapter.Title, resp.Content),
 		}
 		usages = append(usages, resp.Usage)
+		logn.Debug("script converter chapter summary done",
+			TaskLogFields(ctx, "long_form_chapter_summary_done",
+				zap.Int("chapter_index", index),
+				zap.String("chapter_title", chapterTitle),
+				zap.String("summary_mode", finalMode),
+				zap.Int("source_char_count", charCount),
+				zap.Int("summary_char_count", len([]rune(compressed.Chapters[index].Text))),
+				zap.Int64("elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
+				zap.Bool("fallback_triggered", fallbackReason != ""),
+				zap.String("fallback_reason", fallbackReason),
+				zap.Any("usage", resp.Usage),
+			)...,
+		)
 	}
 
+	logn.Debug("script converter long form summary completed",
+		TaskLogFields(ctx, "long_form_summary_completed",
+			zap.Int("chapter_count", len(compressed.Chapters)),
+			zap.Int("target_chars", targetChars),
+			zap.Bool("structured_summary_enabled", structuredEnabled),
+			zap.Any("usage", mergeTokenUsage(usages...)),
+		)...,
+	)
 	return compressed, mergeTokenUsage(usages...), nil
 }
 
