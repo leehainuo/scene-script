@@ -59,6 +59,14 @@ type SaveScriptResultReq struct {
 	YAML string `json:"yaml" validate:"required"`
 }
 
+type RewriteScriptSceneReq struct {
+	ID           string `json:"id" validate:"required,max=64"`
+	YAML         string `json:"yaml" validate:"required"`
+	ChapterIndex int    `json:"chapter_index" validate:"min=0"`
+	SceneIndex   int    `json:"scene_index" validate:"min=0"`
+	Instruction  string `json:"instruction" validate:"required,max=300"`
+}
+
 type DeleteScriptReq struct {
 	ID string `json:"id" validate:"required,max=64"`
 }
