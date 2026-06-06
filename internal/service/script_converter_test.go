@@ -470,6 +470,62 @@ func TestSanitizeQuotedYAMLTextTrimsDanglingTerminalQuote(t *testing.T) {
 	}
 }
 
+func TestNormalizeScriptTextFieldsCompactsNarrativeText(t *testing.T) {
+	script := &model.ScriptYAML{
+		Version: "1.0",
+		Metadata: model.ScriptMetadata{
+			Title: "测试作品",
+		},
+		Settings: []model.Setting{
+			{
+				Name:        "民宿",
+				Description: "山下的简易住宿点。\n\n\n       沈砚休整之地，也是过渡空间。\n\n       曾发生银钉异动。\\\"",
+				Importance:  "high",
+			},
+		},
+		Chapters: []model.Chapter{
+			{
+				ID:      "ch1",
+				Title:   "第一章",
+				Summary: "第一段。\n\n\n       第二段。\\\"",
+				Scenes: []model.Scene{
+					{
+						ID:       "ch1.sc1",
+						Title:    "场景一",
+						Goal:     "先靠近。\n\n再确认。\\\"",
+						Location: "老屋",
+						Time:     "夜",
+						POV:      "沈砚",
+						Mood:     "压抑",
+						Beats: []model.Beat{
+							{
+								ID:      "ch1.sc1.b1",
+								Type:    "action",
+								Summary: "观察棺木。\n\n继续靠近。\\\"",
+							},
+						},
+						Outcome: "确认异常。\n\n危险逼近。\\\"",
+					},
+				},
+			},
+		},
+	}
+
+	fixed := normalizeScriptTextFields(script)
+	if fixed == 0 {
+		t.Fatalf("expected text normalization fixes")
+	}
+	if got := script.Settings[0].Description; got != "山下的简易住宿点。 沈砚休整之地，也是过渡空间。 曾发生银钉异动。" {
+		t.Fatalf("unexpected setting description normalization: %q", got)
+	}
+	if got := script.Chapters[0].Summary; got != "第一段。 第二段。" {
+		t.Fatalf("unexpected chapter summary normalization: %q", got)
+	}
+	if got := script.Chapters[0].Scenes[0].Goal; got != "先靠近。 再确认。" {
+		t.Fatalf("unexpected scene goal normalization: %q", got)
+	}
+}
+
 func TestSanitizeKnownSequenceScalarsConvertsCharacterFields(t *testing.T) {
 	raw := "dramatis_personae:\n  - name: \"苏晚\"\n    archetype: \"调查者\"\n    motivation: \"搜集怪谈素材，揭开异常现象背后的真相\"\n    traits: \"敏锐、孤勇、理性中存有共情\"\n    relations: \"与陈阿婆构成记忆与遗愿的镜像关系\"\n    first_appearance: \"ch1\"\n"
 

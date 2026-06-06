@@ -1023,6 +1023,11 @@ func trimDanglingTerminalQuote(value string) string {
 	}
 	runes := []rune(trimmed)
 	last := runes[len(runes)-1]
+	if last == '\\' {
+		return strings.TrimRightFunc(value, func(r rune) bool {
+			return r == '\\'
+		})
+	}
 	if last != '"' && last != '“' && last != '”' {
 		return value
 	}
@@ -1030,7 +1035,7 @@ func trimDanglingTerminalQuote(value string) string {
 		return value
 	}
 	return strings.TrimRightFunc(value, func(r rune) bool {
-		return r == '"' || r == '“' || r == '”'
+		return r == '\\' || r == '"' || r == '“' || r == '”'
 	})
 }
 
@@ -1064,6 +1069,13 @@ func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req Convert
 		return nil, NewConvertError(ConvertErrorYAMLParse, "yaml parse failed", parseErr)
 	}
 
+	textFixes := normalizeScriptTextFields(scriptYAML)
+	if textFixes > 0 {
+		logn.Debug("script text normalization applied",
+			TaskLogFields(ctx, "text_normalized", zap.Int("text_fixes", textFixes))...,
+		)
+	}
+
 	beatFixes, beatDrops := normalizeMalformedBeats(scriptYAML)
 	if beatFixes > 0 || beatDrops > 0 {
 		logn.Debug("script beat normalization applied",
@@ -1092,6 +1104,112 @@ func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req Convert
 		Summary:           sc.generateSummary(scriptYAML),
 		ConsistencyReport: scriptYAML.ConsistencyReport,
 	}, nil
+}
+
+func normalizeScriptTextFields(script *model.ScriptYAML) (fixed int) {
+	script.Version, fixed = normalizeInlineScalar(script.Version, fixed)
+	script.Metadata.Title, fixed = normalizeInlineScalar(script.Metadata.Title, fixed)
+	script.Metadata.Author, fixed = normalizeInlineScalar(script.Metadata.Author, fixed)
+	script.Metadata.Genre, fixed = normalizeInlineScalar(script.Metadata.Genre, fixed)
+	script.Metadata.Tone, fixed = normalizeInlineScalar(script.Metadata.Tone, fixed)
+	script.Metadata.Pacing, fixed = normalizeInlineScalar(script.Metadata.Pacing, fixed)
+	script.Metadata.GeneratedAt, fixed = normalizeInlineScalar(script.Metadata.GeneratedAt, fixed)
+
+	for index := range script.DramatisPersonae {
+		item := &script.DramatisPersonae[index]
+		item.Name, fixed = normalizeInlineScalar(item.Name, fixed)
+		item.Archetype, fixed = normalizeInlineScalar(item.Archetype, fixed)
+		item.Motivation, fixed = normalizeNarrativeScalar(item.Motivation, fixed)
+		item.FirstAppearance, fixed = normalizeInlineScalar(item.FirstAppearance, fixed)
+		for i := range item.Traits {
+			item.Traits[i], fixed = normalizeInlineScalar(item.Traits[i], fixed)
+		}
+		for i := range item.Relations {
+			item.Relations[i], fixed = normalizeNarrativeScalar(item.Relations[i], fixed)
+		}
+	}
+
+	for index := range script.Settings {
+		item := &script.Settings[index]
+		item.Name, fixed = normalizeInlineScalar(item.Name, fixed)
+		item.Description, fixed = normalizeNarrativeScalar(item.Description, fixed)
+		item.Importance, fixed = normalizeInlineScalar(item.Importance, fixed)
+		for i := range item.Aliases {
+			item.Aliases[i], fixed = normalizeInlineScalar(item.Aliases[i], fixed)
+		}
+	}
+
+	for chapterIndex := range script.Chapters {
+		chapter := &script.Chapters[chapterIndex]
+		chapter.ID, fixed = normalizeInlineScalar(chapter.ID, fixed)
+		chapter.Title, fixed = normalizeInlineScalar(chapter.Title, fixed)
+		chapter.Summary, fixed = normalizeNarrativeScalar(chapter.Summary, fixed)
+		for sceneIndex := range chapter.Scenes {
+			scene := &chapter.Scenes[sceneIndex]
+			scene.ID, fixed = normalizeInlineScalar(scene.ID, fixed)
+			scene.Title, fixed = normalizeInlineScalar(scene.Title, fixed)
+			scene.Goal, fixed = normalizeNarrativeScalar(scene.Goal, fixed)
+			scene.Location, fixed = normalizeInlineScalar(scene.Location, fixed)
+			scene.Time, fixed = normalizeInlineScalar(scene.Time, fixed)
+			scene.POV, fixed = normalizeInlineScalar(scene.POV, fixed)
+			scene.Mood, fixed = normalizeInlineScalar(scene.Mood, fixed)
+			scene.Outcome, fixed = normalizeNarrativeScalar(scene.Outcome, fixed)
+			for beatIndex := range scene.Beats {
+				beat := &scene.Beats[beatIndex]
+				beat.ID, fixed = normalizeInlineScalar(beat.ID, fixed)
+				beat.Type, fixed = normalizeInlineScalar(beat.Type, fixed)
+				beat.Summary, fixed = normalizeNarrativeScalar(beat.Summary, fixed)
+				if beat.Dialogue != nil {
+					beat.Dialogue.Speaker, fixed = normalizeInlineScalar(beat.Dialogue.Speaker, fixed)
+					beat.Dialogue.Content, fixed = normalizeNarrativeScalar(beat.Dialogue.Content, fixed)
+				}
+			}
+		}
+	}
+
+	for index := range script.ConsistencyReport.RolesMissing {
+		script.ConsistencyReport.RolesMissing[index], fixed = normalizeInlineScalar(script.ConsistencyReport.RolesMissing[index], fixed)
+	}
+	for index := range script.ConsistencyReport.SettingsMissing {
+		script.ConsistencyReport.SettingsMissing[index], fixed = normalizeInlineScalar(script.ConsistencyReport.SettingsMissing[index], fixed)
+	}
+	for index := range script.ConsistencyReport.DanglingRefs {
+		script.ConsistencyReport.DanglingRefs[index], fixed = normalizeNarrativeScalar(script.ConsistencyReport.DanglingRefs[index], fixed)
+	}
+	return fixed
+}
+
+func normalizeInlineScalar(value string, fixed int) (string, int) {
+	next := strings.TrimSpace(value)
+	next = strings.Join(strings.Fields(next), " ")
+	next = trimDanglingTerminalQuote(next)
+	if next != value {
+		return next, fixed + 1
+	}
+	return value, fixed
+}
+
+func normalizeNarrativeScalar(value string, fixed int) (string, int) {
+	next := strings.ReplaceAll(value, "\r\n", "\n")
+	next = strings.ReplaceAll(next, "\r", "\n")
+	next = trimDanglingTerminalQuote(next)
+
+	lines := strings.Split(next, "\n")
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts = append(parts, line)
+	}
+	next = strings.Join(parts, " ")
+	next = strings.Join(strings.Fields(next), " ")
+	next = trimDanglingTerminalQuote(next)
+	if next != value {
+		return next, fixed + 1
+	}
+	return value, fixed
 }
 
 func normalizeMalformedBeats(script *model.ScriptYAML) (fixed int, dropped int) {
