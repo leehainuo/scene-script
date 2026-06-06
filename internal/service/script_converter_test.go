@@ -438,6 +438,94 @@ func TestSanitizeQuotedYAMLTextConvertsBrokenQuotedSummary(t *testing.T) {
 	}
 }
 
+func TestSanitizeQuotedYAMLTextDecodesEscapedSummaryContent(t *testing.T) {
+	raw := "chapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"沈砚进入老宅。\\n\\n他看见薄木棺。\\\"异样\\\"升起。\"\n    scenes: []\n"
+
+	sanitized := sanitizeQuotedYAMLText(raw)
+
+	if strings.Contains(sanitized, `\n`) {
+		t.Fatalf("expected escaped newlines to be decoded, got %s", sanitized)
+	}
+	if strings.Contains(sanitized, `\"`) {
+		t.Fatalf("expected escaped quotes to be decoded, got %s", sanitized)
+	}
+	if !strings.Contains(sanitized, "summary: |-") {
+		t.Fatalf("expected summary to be rewritten as block scalar, got %s", sanitized)
+	}
+	if !strings.Contains(sanitized, "  他看见薄木棺。\"异样\"升起。") {
+		t.Fatalf("expected decoded summary body, got %s", sanitized)
+	}
+}
+
+func TestSanitizeQuotedYAMLTextTrimsDanglingTerminalQuote(t *testing.T) {
+	raw := "chapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"沈砚进山执行文物清点任务。\\n\\n推门入内，见厅堂中央摆放着同样被银钉钉死的薄木棺，悬念陡升。\\\"\"\n    scenes: []\n"
+
+	sanitized := sanitizeQuotedYAMLText(raw)
+
+	if strings.Contains(sanitized, `悬念陡升。"`) {
+		t.Fatalf("expected dangling terminal quote to be trimmed, got %s", sanitized)
+	}
+	if !strings.Contains(sanitized, "  推门入内，见厅堂中央摆放着同样被银钉钉死的薄木棺，悬念陡升。") {
+		t.Fatalf("expected cleaned summary body, got %s", sanitized)
+	}
+}
+
+func TestNormalizeScriptTextFieldsCompactsNarrativeText(t *testing.T) {
+	script := &model.ScriptYAML{
+		Version: "1.0",
+		Metadata: model.ScriptMetadata{
+			Title: "测试作品",
+		},
+		Settings: []model.Setting{
+			{
+				Name:        "民宿",
+				Description: "山下的简易住宿点。\n\n\n       沈砚休整之地，也是过渡空间。\n\n       曾发生银钉异动。\\\"",
+				Importance:  "high",
+			},
+		},
+		Chapters: []model.Chapter{
+			{
+				ID:      "ch1",
+				Title:   "第一章",
+				Summary: "第一段。\n\n\n       第二段。\\\"",
+				Scenes: []model.Scene{
+					{
+						ID:       "ch1.sc1",
+						Title:    "场景一",
+						Goal:     "先靠近。\n\n再确认。\\\"",
+						Location: "老屋",
+						Time:     "夜",
+						POV:      "沈砚",
+						Mood:     "压抑",
+						Beats: []model.Beat{
+							{
+								ID:      "ch1.sc1.b1",
+								Type:    "action",
+								Summary: "观察棺木。\n\n继续靠近。\\\"",
+							},
+						},
+						Outcome: "确认异常。\n\n危险逼近。\\\"",
+					},
+				},
+			},
+		},
+	}
+
+	fixed := normalizeScriptTextFields(script)
+	if fixed == 0 {
+		t.Fatalf("expected text normalization fixes")
+	}
+	if got := script.Settings[0].Description; got != "山下的简易住宿点。 沈砚休整之地，也是过渡空间。 曾发生银钉异动。" {
+		t.Fatalf("unexpected setting description normalization: %q", got)
+	}
+	if got := script.Chapters[0].Summary; got != "第一段。 第二段。" {
+		t.Fatalf("unexpected chapter summary normalization: %q", got)
+	}
+	if got := script.Chapters[0].Scenes[0].Goal; got != "先靠近。 再确认。" {
+		t.Fatalf("unexpected scene goal normalization: %q", got)
+	}
+}
+
 func TestSanitizeKnownSequenceScalarsConvertsCharacterFields(t *testing.T) {
 	raw := "dramatis_personae:\n  - name: \"苏晚\"\n    archetype: \"调查者\"\n    motivation: \"搜集怪谈素材，揭开异常现象背后的真相\"\n    traits: \"敏锐、孤勇、理性中存有共情\"\n    relations: \"与陈阿婆构成记忆与遗愿的镜像关系\"\n    first_appearance: \"ch1\"\n"
 
@@ -934,6 +1022,63 @@ func TestRepairPromptAddsConservativeRulesForSchemaErrors(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("expected schema repair prompt to contain %q, got %s", want, prompt)
+		}
+	}
+}
+
+func TestSceneRewritePromptDefinesPriorityAndScope(t *testing.T) {
+	pm := NewPromptManager(&config.LLMPromptConf{})
+	req := ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: "沈砚进入老宅，发现封棺异象。"},
+			{Title: "第二章", Text: "村民开始回避他。"},
+			{Title: "第三章", Text: "调查继续升级。"},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+
+	chapter := model.Chapter{
+		ID:      "ch1",
+		Title:   "第一章：深山封棺老屋",
+		Summary: "沈砚进入老宅，发现封棺异象。",
+		Scenes: []model.Scene{
+			{
+				ID:       "ch1.sc1",
+				Title:    "封门之钉",
+				Goal:     "探索老宅并揭开封印之谜",
+				Location: "半山腰封棺老屋",
+				Time:     "深秋午后",
+				POV:      "沈砚",
+				Mood:     "阴森、压抑",
+				Beats: []model.Beat{
+					{ID: "ch1.sc1.b1", Type: "action", Summary: "沈砚发现房门被银钉封住。"},
+				},
+				Outcome: "封印被破，未知恐惧降临。",
+			},
+		},
+	}
+
+	_, prompt := pm.SceneRewritePrompt(
+		req,
+		req.Chapters[0],
+		0,
+		chapter,
+		chapter.Scenes[0],
+		[]model.Character{{Name: "沈砚"}},
+		[]model.Setting{{Name: "半山腰封棺老屋"}},
+		"把这一场改得更激烈，并顺便改掉下一章结局。",
+	)
+
+	for _, want := range []string{
+		"规则优先级必须严格遵守：schema 完整性 > 原文章节事实 > 用户改写要求",
+		"如果用户要求与原文章节事实冲突，必须以原文章节事实为准",
+		"如果用户要求会导致字段缺失、类型错误或结构非法，必须优先保证 schema 完整性",
+		"只允许改写当前 scene；凡是超出当前 scene 范围、试图改动其他 scene、其他 chapter、人物表、地点表、顶层 metadata 的要求，一律忽略",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected scene rewrite prompt to contain %q, got %s", want, prompt)
 		}
 	}
 }

@@ -2,6 +2,7 @@ import client, { LONG_TASK_REQUEST_TIMEOUT, buildApiUrl, getAccessToken } from "
 import type {
   ApiResponse,
   DeleteScriptResponse,
+  RewriteScriptSceneRequest,
   SaveScriptResultRequest,
   ScriptConvertRequest,
   ScriptConvertResponse,
@@ -43,6 +44,20 @@ export const saveScriptResult = async (
   const response = await client.put<ApiResponse<ScriptDetailResponse>>(
     `/script/${id}/result`,
     data
+  )
+  return response.data
+}
+
+export const rewriteScriptScene = async (
+  id: string,
+  data: RewriteScriptSceneRequest
+) => {
+  const response = await client.post<ApiResponse<ScriptDetailResponse>>(
+    `/script/${id}/scene-rewrite`,
+    data,
+    {
+      timeout: LONG_TASK_REQUEST_TIMEOUT,
+    }
   )
   return response.data
 }

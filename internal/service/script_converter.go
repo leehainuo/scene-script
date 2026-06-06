@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +63,14 @@ type ConvertProgress struct {
 }
 
 type ConvertProgressReporter func(ConvertProgress)
+
+type SceneRewriteRequest struct {
+	CurrentYAML  string
+	Source       ConvertRequest
+	ChapterIndex int
+	SceneIndex   int
+	Instruction  string
+}
 
 const (
 	longFormTotalCharsThreshold    = 12000
@@ -591,6 +600,76 @@ func (sc *ScriptConverter) NormalizeEditedYAML(rawYAML string, genre, tone, paci
 	return sc.normalizeAndValidate(context.Background(), req, rawYAML)
 }
 
+// RewriteScene rewrites a single scene while preserving the surrounding YAML structure.
+func (sc *ScriptConverter) RewriteScene(ctx context.Context, req SceneRewriteRequest) (*ConvertResult, error) {
+	if strings.TrimSpace(req.CurrentYAML) == "" {
+		return nil, NewConvertError(ConvertErrorSchema, "current yaml is required", nil)
+	}
+	if err := sc.validateRequest(req.Source); err != nil {
+		return nil, err
+	}
+	if req.ChapterIndex < 0 || req.ChapterIndex >= len(req.Source.Chapters) {
+		return nil, NewConvertError(ConvertErrorSchema, "chapter index out of range", nil)
+	}
+
+	scriptYAML := &model.ScriptYAML{}
+	if err := yaml.Unmarshal([]byte(sanitizeLLMOutput(req.CurrentYAML)), scriptYAML); err != nil {
+		return nil, NewConvertError(ConvertErrorYAMLParse, "current yaml parse failed", err)
+	}
+	if req.ChapterIndex >= len(scriptYAML.Chapters) {
+		return nil, NewConvertError(ConvertErrorSchema, "chapter index exceeds current script", nil)
+	}
+	if req.SceneIndex < 0 || req.SceneIndex >= len(scriptYAML.Chapters[req.ChapterIndex].Scenes) {
+		return nil, NewConvertError(ConvertErrorSchema, "scene index out of range", nil)
+	}
+
+	currentChapter := scriptYAML.Chapters[req.ChapterIndex]
+	currentScene := currentChapter.Scenes[req.SceneIndex]
+	systemPrompt, userPrompt := sc.promptManager.SceneRewritePrompt(
+		req.Source,
+		req.Source.Chapters[req.ChapterIndex],
+		req.ChapterIndex,
+		currentChapter,
+		currentScene,
+		scriptYAML.DramatisPersonae,
+		scriptYAML.Settings,
+		req.Instruction,
+	)
+	llmResp, err := sc.generateYAMLScript(ctx, systemPrompt, userPrompt)
+	if err != nil {
+		return nil, err
+	}
+
+	rewrittenScene, err := parseSceneRewriteOutput(llmResp.Content, req.ChapterIndex, req.SceneIndex)
+	if err != nil {
+		return nil, NewConvertError(ConvertErrorYAMLParse, "scene rewrite yaml parse failed", err)
+	}
+	scriptYAML.Chapters[req.ChapterIndex].Scenes[req.SceneIndex] = normalizeRewrittenScene(
+		rewrittenScene,
+		currentScene,
+		req.ChapterIndex,
+		req.SceneIndex,
+	)
+
+	mergedYAML, err := yaml.Marshal(scriptYAML)
+	if err != nil {
+		return nil, NewConvertError(ConvertErrorSerialization, "scene rewrite yaml serialization failed", err)
+	}
+
+	result, err := sc.NormalizeEditedYAML(
+		string(mergedYAML),
+		req.Source.Genre,
+		req.Source.Tone,
+		req.Source.Pacing,
+		len(req.Source.Chapters),
+	)
+	if err != nil {
+		return nil, err
+	}
+	result.Usage = llmResp.Usage
+	return result, nil
+}
+
 func (sc *ScriptConverter) validateRequest(req ConvertRequest) error {
 	if len(req.Chapters) < minConvertSourceChapters || len(req.Chapters) > maxConvertSourceChapters {
 		return NewConvertError(
@@ -644,6 +723,70 @@ func sanitizeLLMOutput(raw string) string {
 	trimmed = sanitizeKnownSequenceScalars(trimmed)
 
 	return trimmed
+}
+
+func parseSceneRewriteOutput(raw string, chapterIndex, sceneIndex int) (model.Scene, error) {
+	sanitized := sanitizeLLMOutput(raw)
+	var wrapped struct {
+		Scene model.Scene `yaml:"scene"`
+	}
+	if err := yaml.Unmarshal([]byte(sanitized), &wrapped); err == nil && sceneHasContent(wrapped.Scene) {
+		return wrapped.Scene, nil
+	}
+
+	var scene model.Scene
+	if err := yaml.Unmarshal([]byte(sanitized), &scene); err == nil && sceneHasContent(scene) {
+		return scene, nil
+	}
+
+	var script model.ScriptYAML
+	if err := yaml.Unmarshal([]byte(sanitized), &script); err == nil {
+		if chapterIndex < len(script.Chapters) && sceneIndex < len(script.Chapters[chapterIndex].Scenes) {
+			return script.Chapters[chapterIndex].Scenes[sceneIndex], nil
+		}
+	}
+
+	return model.Scene{}, fmt.Errorf("rewrite output did not contain a valid scene object")
+}
+
+func sceneHasContent(scene model.Scene) bool {
+	return strings.TrimSpace(scene.Title) != "" ||
+		strings.TrimSpace(scene.Goal) != "" ||
+		len(scene.Beats) > 0 ||
+		strings.TrimSpace(scene.Outcome) != ""
+}
+
+func normalizeRewrittenScene(next, current model.Scene, chapterIndex, sceneIndex int) model.Scene {
+	sceneID := fmt.Sprintf("ch%d.sc%d", chapterIndex+1, sceneIndex+1)
+	next.ID = sceneID
+	next.Title = preserveOrTrim(next.Title, current.Title)
+	next.Goal = preserveOrTrim(next.Goal, current.Goal)
+	next.Location = preserveOrTrim(next.Location, current.Location)
+	next.Time = preserveOrTrim(next.Time, current.Time)
+	next.POV = preserveOrTrim(next.POV, current.POV)
+	next.Mood = preserveOrTrim(next.Mood, current.Mood)
+	next.Outcome = preserveOrTrim(next.Outcome, current.Outcome)
+	if next.Beats == nil {
+		next.Beats = []model.Beat{}
+	}
+	for beatIndex := range next.Beats {
+		next.Beats[beatIndex].ID = fmt.Sprintf("%s.b%d", sceneID, beatIndex+1)
+		next.Beats[beatIndex].Type = strings.TrimSpace(next.Beats[beatIndex].Type)
+		next.Beats[beatIndex].Summary = strings.TrimSpace(next.Beats[beatIndex].Summary)
+		if next.Beats[beatIndex].Dialogue != nil {
+			next.Beats[beatIndex].Dialogue.Speaker = strings.TrimSpace(next.Beats[beatIndex].Dialogue.Speaker)
+			next.Beats[beatIndex].Dialogue.Content = strings.TrimSpace(next.Beats[beatIndex].Dialogue.Content)
+		}
+	}
+	return next
+}
+
+func preserveOrTrim(next, fallback string) string {
+	next = strings.TrimSpace(next)
+	if next == "" {
+		return strings.TrimSpace(fallback)
+	}
+	return next
 }
 
 func isLikelyTruncatedYAMLError(raw string, err error) bool {
@@ -807,6 +950,10 @@ func sanitizeQuotedYAMLText(raw string) string {
 		}
 
 		unquoted := trimQuotedScalarEdge(valuePart)
+		if decoded, ok := decodeDoubleQuotedYAMLScalar(valuePart); ok {
+			unquoted = decoded
+		}
+		unquoted = trimDanglingTerminalQuote(unquoted)
 		indent := strings.Repeat(" ", len(keyPart)-len(strings.TrimLeft(keyPart, " "))+2)
 		output = append(output, keyPart+": |-")
 		for _, blockLine := range strings.Split(unquoted, "\n") {
@@ -823,7 +970,12 @@ func shouldConvertQuotedScalar(value string) bool {
 
 	if hasQuotedScalarTerminator(value) {
 		inner := trimQuotedScalarEdge(value)
-		return strings.Contains(inner, `"`) || strings.Contains(inner, "：") || strings.Contains(inner, "“") || strings.Contains(inner, "”")
+		return strings.Contains(inner, `"`) ||
+			strings.Contains(inner, `\"`) ||
+			strings.Contains(inner, `\n`) ||
+			strings.Contains(inner, "：") ||
+			strings.Contains(inner, "“") ||
+			strings.Contains(inner, "”")
 	}
 
 	return true
@@ -852,6 +1004,51 @@ func trimQuotedScalarEdge(value string) string {
 	}
 }
 
+func decodeDoubleQuotedYAMLScalar(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+		return "", false
+	}
+	decoded, err := strconv.Unquote(value)
+	if err != nil {
+		return "", false
+	}
+	return decoded, true
+}
+
+func trimDanglingTerminalQuote(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return value
+	}
+	runes := []rune(trimmed)
+	last := runes[len(runes)-1]
+	if last == '\\' {
+		return strings.TrimRightFunc(value, func(r rune) bool {
+			return r == '\\'
+		})
+	}
+	if last != '"' && last != '“' && last != '”' {
+		return value
+	}
+	if countQuoteLikeRunes(trimmed)%2 == 0 {
+		return value
+	}
+	return strings.TrimRightFunc(value, func(r rune) bool {
+		return r == '\\' || r == '"' || r == '“' || r == '”'
+	})
+}
+
+func countQuoteLikeRunes(value string) int {
+	count := 0
+	for _, r := range value {
+		if r == '"' || r == '“' || r == '”' {
+			count++
+		}
+	}
+	return count
+}
+
 func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req ConvertRequest, rawContent string) (*ConvertResult, error) {
 	sanitized := sanitizeLLMOutput(rawContent)
 	logn.Debug("script yaml sanitize finished",
@@ -870,6 +1067,13 @@ func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req Convert
 			)...,
 		)
 		return nil, NewConvertError(ConvertErrorYAMLParse, "yaml parse failed", parseErr)
+	}
+
+	textFixes := normalizeScriptTextFields(scriptYAML)
+	if textFixes > 0 {
+		logn.Debug("script text normalization applied",
+			TaskLogFields(ctx, "text_normalized", zap.Int("text_fixes", textFixes))...,
+		)
 	}
 
 	beatFixes, beatDrops := normalizeMalformedBeats(scriptYAML)
@@ -900,6 +1104,112 @@ func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req Convert
 		Summary:           sc.generateSummary(scriptYAML),
 		ConsistencyReport: scriptYAML.ConsistencyReport,
 	}, nil
+}
+
+func normalizeScriptTextFields(script *model.ScriptYAML) (fixed int) {
+	script.Version, fixed = normalizeInlineScalar(script.Version, fixed)
+	script.Metadata.Title, fixed = normalizeInlineScalar(script.Metadata.Title, fixed)
+	script.Metadata.Author, fixed = normalizeInlineScalar(script.Metadata.Author, fixed)
+	script.Metadata.Genre, fixed = normalizeInlineScalar(script.Metadata.Genre, fixed)
+	script.Metadata.Tone, fixed = normalizeInlineScalar(script.Metadata.Tone, fixed)
+	script.Metadata.Pacing, fixed = normalizeInlineScalar(script.Metadata.Pacing, fixed)
+	script.Metadata.GeneratedAt, fixed = normalizeInlineScalar(script.Metadata.GeneratedAt, fixed)
+
+	for index := range script.DramatisPersonae {
+		item := &script.DramatisPersonae[index]
+		item.Name, fixed = normalizeInlineScalar(item.Name, fixed)
+		item.Archetype, fixed = normalizeInlineScalar(item.Archetype, fixed)
+		item.Motivation, fixed = normalizeNarrativeScalar(item.Motivation, fixed)
+		item.FirstAppearance, fixed = normalizeInlineScalar(item.FirstAppearance, fixed)
+		for i := range item.Traits {
+			item.Traits[i], fixed = normalizeInlineScalar(item.Traits[i], fixed)
+		}
+		for i := range item.Relations {
+			item.Relations[i], fixed = normalizeNarrativeScalar(item.Relations[i], fixed)
+		}
+	}
+
+	for index := range script.Settings {
+		item := &script.Settings[index]
+		item.Name, fixed = normalizeInlineScalar(item.Name, fixed)
+		item.Description, fixed = normalizeNarrativeScalar(item.Description, fixed)
+		item.Importance, fixed = normalizeInlineScalar(item.Importance, fixed)
+		for i := range item.Aliases {
+			item.Aliases[i], fixed = normalizeInlineScalar(item.Aliases[i], fixed)
+		}
+	}
+
+	for chapterIndex := range script.Chapters {
+		chapter := &script.Chapters[chapterIndex]
+		chapter.ID, fixed = normalizeInlineScalar(chapter.ID, fixed)
+		chapter.Title, fixed = normalizeInlineScalar(chapter.Title, fixed)
+		chapter.Summary, fixed = normalizeNarrativeScalar(chapter.Summary, fixed)
+		for sceneIndex := range chapter.Scenes {
+			scene := &chapter.Scenes[sceneIndex]
+			scene.ID, fixed = normalizeInlineScalar(scene.ID, fixed)
+			scene.Title, fixed = normalizeInlineScalar(scene.Title, fixed)
+			scene.Goal, fixed = normalizeNarrativeScalar(scene.Goal, fixed)
+			scene.Location, fixed = normalizeInlineScalar(scene.Location, fixed)
+			scene.Time, fixed = normalizeInlineScalar(scene.Time, fixed)
+			scene.POV, fixed = normalizeInlineScalar(scene.POV, fixed)
+			scene.Mood, fixed = normalizeInlineScalar(scene.Mood, fixed)
+			scene.Outcome, fixed = normalizeNarrativeScalar(scene.Outcome, fixed)
+			for beatIndex := range scene.Beats {
+				beat := &scene.Beats[beatIndex]
+				beat.ID, fixed = normalizeInlineScalar(beat.ID, fixed)
+				beat.Type, fixed = normalizeInlineScalar(beat.Type, fixed)
+				beat.Summary, fixed = normalizeNarrativeScalar(beat.Summary, fixed)
+				if beat.Dialogue != nil {
+					beat.Dialogue.Speaker, fixed = normalizeInlineScalar(beat.Dialogue.Speaker, fixed)
+					beat.Dialogue.Content, fixed = normalizeNarrativeScalar(beat.Dialogue.Content, fixed)
+				}
+			}
+		}
+	}
+
+	for index := range script.ConsistencyReport.RolesMissing {
+		script.ConsistencyReport.RolesMissing[index], fixed = normalizeInlineScalar(script.ConsistencyReport.RolesMissing[index], fixed)
+	}
+	for index := range script.ConsistencyReport.SettingsMissing {
+		script.ConsistencyReport.SettingsMissing[index], fixed = normalizeInlineScalar(script.ConsistencyReport.SettingsMissing[index], fixed)
+	}
+	for index := range script.ConsistencyReport.DanglingRefs {
+		script.ConsistencyReport.DanglingRefs[index], fixed = normalizeNarrativeScalar(script.ConsistencyReport.DanglingRefs[index], fixed)
+	}
+	return fixed
+}
+
+func normalizeInlineScalar(value string, fixed int) (string, int) {
+	next := strings.TrimSpace(value)
+	next = strings.Join(strings.Fields(next), " ")
+	next = trimDanglingTerminalQuote(next)
+	if next != value {
+		return next, fixed + 1
+	}
+	return value, fixed
+}
+
+func normalizeNarrativeScalar(value string, fixed int) (string, int) {
+	next := strings.ReplaceAll(value, "\r\n", "\n")
+	next = strings.ReplaceAll(next, "\r", "\n")
+	next = trimDanglingTerminalQuote(next)
+
+	lines := strings.Split(next, "\n")
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts = append(parts, line)
+	}
+	next = strings.Join(parts, " ")
+	next = strings.Join(strings.Fields(next), " ")
+	next = trimDanglingTerminalQuote(next)
+	if next != value {
+		return next, fixed + 1
+	}
+	return value, fixed
 }
 
 func normalizeMalformedBeats(script *model.ScriptYAML) (fixed int, dropped int) {

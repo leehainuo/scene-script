@@ -1,4 +1,4 @@
-import YAML from "yaml"
+import YAML, { Document, Scalar, visit } from "yaml"
 import type {
   ScriptBeat,
   ScriptCharacter,
@@ -360,8 +360,19 @@ export function serializeScriptYaml(document: ScriptYamlDocument) {
     consistency_report: buildScriptConsistency(document),
   }
 
-  return YAML.stringify(payload, {
+  const yamlDocument = new Document(payload)
+  visit(yamlDocument, {
+    Scalar(key, node) {
+      if (key === "key" || typeof node.value !== "string") {
+        return
+      }
+      if (node.value.includes("\n")) {
+        node.type = Scalar.BLOCK_LITERAL
+      }
+    },
+  })
+
+  return yamlDocument.toString({
     lineWidth: 0,
-    defaultStringType: "QUOTE_DOUBLE",
   })
 }

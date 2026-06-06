@@ -170,6 +170,13 @@ export interface SaveScriptResultRequest {
   yaml: string
 }
 
+export interface RewriteScriptSceneRequest {
+  yaml: string
+  chapter_index: number
+  scene_index: number
+  instruction: string
+}
+
 export interface ScriptListParams extends PaginationParams {
   status?: "all" | "pending" | "running" | "succeeded" | "failed"
 }

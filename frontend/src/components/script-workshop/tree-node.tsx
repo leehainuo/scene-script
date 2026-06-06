@@ -10,9 +10,22 @@ type TreeNodeProps = {
   level?: number
 }
 
+function truncateTreeText(value: string, maxChars: number) {
+  const normalized = value.trim()
+  const chars = Array.from(normalized)
+  if (chars.length <= maxChars) {
+    return normalized
+  }
+  return `${chars.slice(0, maxChars).join("")}...`
+}
+
 export function TreeNode({ node, selectedId, onSelect, level = 0 }: TreeNodeProps) {
   const [open, setOpen] = useState(level < 2)
   const hasChildren = node.children.length > 0
+  const labelMaxChars = node.kind === "chapter" ? 18 : node.kind === "scene" ? 14 : 16
+  const descriptionMaxChars = node.kind === "chapter" ? 26 : 20
+  const displayLabel = truncateTreeText(node.label, labelMaxChars)
+  const displayDescription = truncateTreeText(node.description, descriptionMaxChars)
 
   return (
     <div className="space-y-1">
@@ -40,8 +53,12 @@ export function TreeNode({ node, selectedId, onSelect, level = 0 }: TreeNodeProp
           <span className="mt-0.5 h-4 w-4 shrink-0" />
         )}
         <div className="min-w-0">
-          <span className="block break-all">{node.label}</span>
-          <span className="mt-0.5 block truncate text-xs text-slate-400">{node.description}</span>
+          <span className="block truncate" title={node.label}>
+            {displayLabel}
+          </span>
+          <span className="mt-0.5 block truncate text-xs text-slate-400" title={node.description}>
+            {displayDescription}
+          </span>
         </div>
       </button>
       {hasChildren && open ? (
