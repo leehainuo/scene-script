@@ -74,6 +74,13 @@ function formatConsistencyItem(
   return item
 }
 
+const detailCardEnterClass =
+  "animate-in fade-in slide-in-from-bottom-2 duration-500 ease-out fill-mode-both"
+
+function getDetailCardAnimationDelay(index: number) {
+  return { animationDelay: `${Math.min(index, 8) * 60}ms` }
+}
+
 type DetailViewProps = {
   activeResult: WorkshopResult | null
   activeTaskMeta: ScriptTaskMeta | null
@@ -297,10 +304,14 @@ export function DetailView({
                         { label: "节拍", value: summary.beats },
                         { label: "角色", value: summary.characters },
                         { label: "地点", value: summary.settings },
-                      ].map((item) => (
+                      ].map((item, index) => (
                         <div
                           key={item.label}
-                          className="rounded-[22px] border border-black/6 bg-slate-50 px-4 py-4"
+                          className={cn(
+                            "rounded-[22px] border border-black/6 bg-slate-50 px-4 py-4",
+                            detailCardEnterClass
+                          )}
+                          style={getDetailCardAnimationDelay(index)}
                         >
                           <p className="text-xs text-slate-400">{item.label}</p>
                           <p className="mt-2 text-2xl font-semibold text-slate-900">{item.value}</p>
@@ -309,7 +320,13 @@ export function DetailView({
                     </div>
 
                     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-                      <div className="rounded-[24px] border border-black/6 bg-slate-50 p-5">
+                      <div
+                        className={cn(
+                          "rounded-[24px] border border-black/6 bg-slate-50 p-5",
+                          detailCardEnterClass
+                        )}
+                        style={getDetailCardAnimationDelay(5)}
+                      >
                         <p className="text-xs text-slate-400">结果摘要</p>
                         <p className="mt-3 text-sm leading-7 text-slate-600">
                           当前风格为{" "}
@@ -324,7 +341,13 @@ export function DetailView({
                           最近更新：{formatDateTime(activeResult.metadata.updated_at)}
                         </p>
                       </div>
-                      <div className="rounded-[24px] border border-black/6 bg-slate-50 p-5">
+                      <div
+                        className={cn(
+                          "rounded-[24px] border border-black/6 bg-slate-50 p-5",
+                          detailCardEnterClass
+                        )}
+                        style={getDetailCardAnimationDelay(6)}
+                      >
                         <p className="text-xs text-slate-400">一致性质检概况</p>
                         <div className="mt-4 space-y-3 text-sm">
                           <div className="rounded-2xl bg-white px-4 py-3 text-slate-600">
@@ -379,7 +402,13 @@ export function DetailView({
                   />
 
                   <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-                        <div className="rounded-[24px] border border-black/6 bg-slate-50 p-3">
+                        <div
+                          className={cn(
+                            "rounded-[24px] border border-black/6 bg-slate-50 p-3",
+                            detailCardEnterClass
+                          )}
+                          style={getDetailCardAnimationDelay(0)}
+                        >
                           <div className="max-h-[560px] space-y-2 overflow-y-auto">
                             {registryView === "characters"
                               ? editableDocument.dramatis_personae.map((character, index) => (
@@ -442,7 +471,13 @@ export function DetailView({
                           </div>
                         </div>
 
-                        <div className="rounded-[24px] border border-black/6 bg-slate-50 p-5">
+                        <div
+                          className={cn(
+                            "rounded-[24px] border border-black/6 bg-slate-50 p-5",
+                            detailCardEnterClass
+                          )}
+                          style={getDetailCardAnimationDelay(1)}
+                        >
                           {registryView === "characters" ? (
                             selectedCharacter ? (
                               <div className="space-y-5">
@@ -779,10 +814,14 @@ export function DetailView({
                     items: consistency.danglingRefs,
                     kind: "danglingRefs",
                   },
-                ] as const).map((group) => (
+                ] as const).map((group, index) => (
                   <div
                     key={group.label}
-                    className="rounded-[24px] border border-black/6 bg-slate-50 p-4"
+                    className={cn(
+                      "rounded-[24px] border border-black/6 bg-slate-50 p-4",
+                      detailCardEnterClass
+                    )}
+                    style={getDetailCardAnimationDelay(index)}
                   >
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-medium text-slate-800">{group.label}</p>
@@ -830,7 +869,13 @@ export function DetailView({
                     下载
                   </Button>
                 </div>
-                <div className="rounded-[24px] border border-black/6 bg-slate-900 p-4">
+                <div
+                  className={cn(
+                    "rounded-[24px] border border-black/6 bg-slate-900 p-4",
+                    detailCardEnterClass
+                  )}
+                  style={getDetailCardAnimationDelay(0)}
+                >
                   <pre className="max-h-[560px] overflow-auto whitespace-pre font-mono text-sm leading-6 text-slate-100">
                     {liveYaml}
                   </pre>
@@ -841,7 +886,13 @@ export function DetailView({
             {view === "structure" ? (
               <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
                 <div className="space-y-4 xl:sticky xl:top-28 xl:self-start">
-                  <div className="h-[clamp(420px,calc(100vh-9rem),760px)] overflow-y-auto rounded-[24px] border border-black/6 bg-slate-50 p-3">
+                  <div
+                    className={cn(
+                      "h-[clamp(420px,calc(100vh-9rem),760px)] overflow-y-auto rounded-[24px] border border-black/6 bg-slate-50 p-3",
+                      detailCardEnterClass
+                    )}
+                    style={getDetailCardAnimationDelay(0)}
+                  >
                     <div className="space-y-1">
                       {semanticTree.map((node) => (
                         <TreeNode
@@ -855,7 +906,13 @@ export function DetailView({
                   </div>
                 </div>
 
-                <div className="rounded-[24px] border border-black/6 bg-slate-50 p-5">
+                <div
+                  className={cn(
+                    "rounded-[24px] border border-black/6 bg-slate-50 p-5",
+                    detailCardEnterClass
+                  )}
+                  style={getDetailCardAnimationDelay(1)}
+                >
                   {!editableDocument ? (
                     <div className="rounded-[20px] border border-dashed border-black/8 bg-white px-4 py-10 text-center text-sm text-slate-400">
                       当前结果暂时无法解析成语义结构，请先重新生成一次剧本。

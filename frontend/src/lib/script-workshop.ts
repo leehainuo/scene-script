@@ -268,7 +268,7 @@ export function getHistoryCardCopy(item: ScriptHistoryItem) {
   if (item.status === "succeeded") {
     return {
       eyebrow: "继续打磨",
-      title: "第一版剧本已经生成完成",
+      title: "剧本已经生成完成",
       body: "可以继续审阅结构、检查一致性，或直接进入详情编辑。",
       toneClass: "bg-slate-50 text-slate-600",
     }

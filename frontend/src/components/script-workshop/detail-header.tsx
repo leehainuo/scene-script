@@ -34,7 +34,7 @@ export function ScriptDetailHeader({
       </div>
 
       <div className="sticky top-4 z-10">
-        <div className="rounded-xl border border-black/6 bg-white/76 p-3 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+        <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 ease-out fill-mode-both rounded-xl border border-black/6 bg-white/76 p-3 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
           <SegmentedToolbar
             items={tabs}
             activeKey={view}
@@ -43,7 +43,7 @@ export function ScriptDetailHeader({
         </div>
       </div>
 
-      <div className="rounded-[30px] border border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+      <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 ease-out fill-mode-both rounded-[30px] border border-black/6 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
         <div className="p-5">{children}</div>
       </div>
     </div>

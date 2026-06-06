@@ -362,7 +362,7 @@ export function useScriptWorkshopTasks({
   }
 
   async function handleLoadHistory(item: ScriptHistoryItem) {
-    await loadDetailById(item.id, `已载入「${item.title}」的结果，你可以继续审阅结构。`)
+    await loadDetailById(item.id, `已载入「${item.title}」`)
   }
 
   async function handleRetryHistory(item: ScriptHistoryItem) {

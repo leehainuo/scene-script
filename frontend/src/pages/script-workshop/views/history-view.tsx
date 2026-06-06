@@ -74,7 +74,7 @@ export function HistoryView({
 
       <div className="space-y-4">
         <div className="sticky top-4 z-10">
-          <div className="rounded-xl border border-black/6 bg-white/76 p-3 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+          <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 ease-out fill-mode-both rounded-xl border border-black/6 bg-white/76 p-3 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
             <div className="flex flex-col gap-3 md:flex-row">
               <Input
                 value={search}
@@ -283,4 +283,3 @@ export function HistoryView({
     </div>
   )
 }
-
