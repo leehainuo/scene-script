@@ -162,8 +162,13 @@ func TestBuildPrompt(t *testing.T) {
 		"压抑",
 		"medium",
 		"第一章",
+		"任务说明：",
+		"输出预算：",
+		"输入正文：",
 		"traits 和 relations 必须是 YAML sequence",
 		`错误示例：traits: "敏锐、孤勇、理性中存有共情"`,
+		"不得输出 Schema 之外的新顶层字段",
+		"如果某个数组字段当前没有可靠内容，优先输出空数组",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q: %s", want, prompt)
@@ -188,6 +193,9 @@ func TestBuildPromptIncludesCompactBudgetForTwelveChapters(t *testing.T) {
 	prompt := converter.buildPrompt(req)
 	if !strings.Contains(prompt, "当源章节数为 9~12 章时，必须使用紧凑输出") {
 		t.Fatalf("expected compact budget rule in prompt, got %s", prompt)
+	}
+	if !strings.Contains(prompt, "- 第1章《第1章》") {
+		t.Fatalf("expected chapter list in task section, got %s", prompt)
 	}
 }
 

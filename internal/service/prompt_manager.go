@@ -73,8 +73,13 @@ func (pm *PromptManager) ConvertPrompt(req ConvertRequest) (systemPrompt, userPr
 		template = "根据以下小说文本，生成结构化剧本。\n\n体裁: {genre}\n语气: {tone}\n节奏: {pacing}\n\n小说内容:\n{chapters_text}"
 	}
 
-	userPrompt = renderPromptTemplate(template, req, time.Now())
-	userPrompt = strings.TrimSpace(userPrompt) + "\n\n" + pm.schemaContract(req, time.Now())
+	now := time.Now()
+	userPrompt = joinPromptSections(
+		"任务说明：\n"+strings.TrimSpace(renderPromptTemplate(template, req, now)),
+		pm.schemaContract(req, now),
+		"输出预算：\n"+pm.outputBudgetRule(req),
+		"输入正文：\n"+chapterInputText(req.Chapters),
+	)
 	return systemPrompt, userPrompt
 }
 
@@ -142,10 +147,12 @@ func (pm *PromptManager) RepairPrompt(req ConvertRequest, rawYAML string, valida
 		userPrompt = strings.ReplaceAll(userPrompt, old, newVal)
 	}
 
-	userPrompt = strings.TrimSpace(userPrompt) +
-		"\n\n" + pm.repairStrategy(req, rawYAML, validationErr) +
-		"\n\n用于必要时从头重写的章节输入：\n" + chapterInputText(req.Chapters) +
-		"\n\n" + pm.schemaContract(req, now)
+	userPrompt = joinPromptSections(
+		strings.TrimSpace(userPrompt),
+		pm.repairStrategy(req, rawYAML, validationErr),
+		"用于必要时从头重写的章节输入：\n"+chapterInputText(req.Chapters),
+		pm.schemaContract(req, now),
+	)
 	return systemPrompt, userPrompt
 }
 
@@ -166,6 +173,10 @@ func (pm *PromptManager) schemaContract(req ConvertRequest, now time.Time) strin
 - metadata.genre/tone/pacing 必须分别为 %s/%s/%s
 - 如果无法确定标题，可基于第一章标题生成整体剧名
 - 如果无法确定作者，请填写 "未知作者"
+- 不得输出 Schema 之外的新顶层字段，也不要附加注释、解释或说明段落
+- 如果某个数组字段当前没有可靠内容，优先输出空数组，不要为了“看起来完整”而虚构实体
+- 如果无法充分展开细节，优先保证 top-level、chapter、scene 的结构完整，再压缩 beat 细节
+- 不要跨章节虚构原文未出现的人物关系、地点关系或关键事件因果
 - consistency_report 中三个字段必须始终存在，允许为空数组
 - 下列字段必须始终输出为 YAML sequence，哪怕只有 1 个元素也要写成列表项形式，禁止写成普通字符串：
   - dramatis_personae[].traits
@@ -185,7 +196,6 @@ func (pm *PromptManager) schemaContract(req ConvertRequest, now time.Time) strin
   relations:
     - "与陈阿婆构成记忆与遗愿的镜像关系"
 - 输出体量必须受控，优先保证完整、可解析、可校验，绝不为了细节堆砌而输出超长 YAML
-- %s
 - 对 summary/goal/outcome/description/title/dialogue.content 等长文本字段，优先输出为 YAML block scalar（|-），避免长中文里的引号破坏 YAML
 - 只能输出 YAML，禁止输出 Markdown 代码块`,
 		screenplaySchemaSynopsis,
@@ -194,7 +204,6 @@ func (pm *PromptManager) schemaContract(req ConvertRequest, now time.Time) strin
 		req.Genre,
 		req.Tone,
 		req.Pacing,
-		pm.outputBudgetRule(req),
 	)
 }
 
@@ -241,12 +250,23 @@ func repairYAMLContext(rawYAML string) string {
 	return strings.TrimSpace(head) + "\n...\n# middle omitted for repair context\n...\n" + strings.TrimSpace(tail)
 }
 
+func joinPromptSections(sections ...string) string {
+	parts := make([]string, 0, len(sections))
+	for _, section := range sections {
+		section = strings.TrimSpace(section)
+		if section != "" {
+			parts = append(parts, section)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 func renderPromptTemplate(template string, req ConvertRequest, now time.Time) string {
 	replacements := map[string]string{
 		"{genre}":           req.Genre,
 		"{tone}":            req.Tone,
 		"{pacing}":          req.Pacing,
-		"{chapters_text}":   chapterInputText(req.Chapters),
+		"{chapters_text}":   chapterSourceList(req.Chapters),
 		"{source_chapters}": fmt.Sprintf("%d", len(req.Chapters)),
 		"{generated_at}":    now.Format(time.RFC3339),
 	}
@@ -256,6 +276,14 @@ func renderPromptTemplate(template string, req ConvertRequest, now time.Time) st
 		out = strings.ReplaceAll(out, old, newVal)
 	}
 	return out
+}
+
+func chapterSourceList(chapters []ChapterInput) string {
+	var builder strings.Builder
+	for i, ch := range chapters {
+		fmt.Fprintf(&builder, "- 第%d章《%s》\n", i+1, strings.TrimSpace(ch.Title))
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 func chapterInputText(chapters []ChapterInput) string {
