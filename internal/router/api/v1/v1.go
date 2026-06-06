@@ -52,6 +52,7 @@ func registerScriptRoutes(r *gin.RouterGroup, svc *svc.ServiceContext) {
 		scripts.GET("", script.ListScriptHandler(svc))
 		scripts.GET("/:id", script.GetScriptHandler(svc))
 		scripts.GET("/:id/events", script.WatchScriptEventsHandler(svc))
+		scripts.POST("/:id/scene-rewrite", script.RewriteScriptSceneHandler(svc))
 		scripts.POST("/:id/retry", script.RetryScriptHandler(svc))
 		scripts.DELETE("/:id", script.DeleteScriptHandler(svc))
 		scripts.PUT("/:id/result", script.SaveScriptResultHandler(svc))

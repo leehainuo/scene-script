@@ -3,6 +3,7 @@ import type {
   ScriptConvertRequest,
   ScriptDetailResponse,
   ScriptHistoryItem,
+  ScriptSceneRewriteMode,
   ScriptSummary,
   ScriptTaskMeta,
   ScriptYamlDocument,
@@ -66,6 +67,15 @@ export const BEAT_TYPE_OPTIONS = [
   { value: "inner", label: "内心", hint: "角色心理活动或内心独白" },
   { value: "exposition", label: "叙述", hint: "背景交代、信息说明或画面描述" },
 ] as const
+export const SCENE_REWRITE_OPTIONS: Array<{
+  value: ScriptSceneRewriteMode
+  label: string
+  hint: string
+}> = [
+  { value: "fidelity", label: "更忠于原文", hint: "优先回收原文章节细节，不主动扩写额外事实。" },
+  { value: "conflict", label: "更有冲突", hint: "强化人物目标、阻碍和情绪拉扯。" },
+  { value: "concise", label: "更紧凑", hint: "压缩重复铺陈，让场景推进更利落。" },
+]
 export const BEAT_TYPE_LABEL_MAP: Record<string, string> = Object.fromEntries(
   BEAT_TYPE_OPTIONS.map((item) => [item.value, item.label])
 )

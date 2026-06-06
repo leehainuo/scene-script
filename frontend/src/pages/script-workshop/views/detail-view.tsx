@@ -1,5 +1,5 @@
 import type { Dispatch, RefObject, SetStateAction } from "react"
-import { Copy, Download, GripVertical, Trash2 } from "lucide-react"
+import { Copy, Download, GripVertical, Trash2, Wand2 } from "lucide-react"
 import { ScriptDetailHeader } from "@/components/script-workshop/detail-header"
 import { SegmentedToolbar } from "@/components/script-workshop/segmented-toolbar"
 import { TreeNode } from "@/components/script-workshop/tree-node"
@@ -11,12 +11,20 @@ import { Label } from "@/components/ui/label"
 import { formatScriptStyleSummary, getPacingLabel } from "@/lib/script-display"
 import {
   BEAT_TYPE_OPTIONS,
+  SCENE_REWRITE_OPTIONS,
   formatDateTime,
   getBeatTypeLabel,
 } from "@/lib/script-workshop"
 import type { RegistryTab, ResultView, ScriptTreeNode, WorkshopResult } from "@/lib/script-workshop"
 import { cn } from "@/lib/utils"
-import type { ScriptBeat, ScriptChapter, ScriptScene, ScriptTaskMeta, ScriptYamlDocument } from "@/types"
+import type {
+  ScriptBeat,
+  ScriptChapter,
+  ScriptScene,
+  ScriptSceneRewriteMode,
+  ScriptTaskMeta,
+  ScriptYamlDocument,
+} from "@/types"
 
 type Summary = {
   chapters: number
@@ -137,6 +145,8 @@ type DetailViewProps = {
   currentPovOptions: string[]
   currentLocationOptions: string[]
   currentSpeakerOptions: string[]
+  sceneRewriteMode: ScriptSceneRewriteMode | null
+  handleRewriteScene: (mode: ScriptSceneRewriteMode) => Promise<void>
 }
 
 export function DetailView({
@@ -191,6 +201,8 @@ export function DetailView({
   currentPovOptions,
   currentLocationOptions,
   currentSpeakerOptions,
+  sceneRewriteMode,
+  handleRewriteScene,
 }: DetailViewProps) {
   return (
     <div className="mx-auto max-w-[1040px] space-y-6">
@@ -920,6 +932,45 @@ export function DetailView({
 
                       {selectedNode.kind === "scene" && selectedSceneData ? (
                         <div className="space-y-4">
+                          <div className="rounded-[20px] border border-sky-100 bg-sky-50/70 px-4 py-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-medium text-slate-900">AI 场景改写</p>
+                                <p className="mt-1 text-sm leading-6 text-slate-500">
+                                  基于当前章节原文，只重写这个场景。改写结果会先进入当前编辑态，不会自动覆盖已保存版本。
+                                </p>
+                              </div>
+                              <span className="rounded-full border border-sky-100 bg-white px-3 py-1 text-xs text-sky-600">
+                                当前场景 {selectedSceneData.beats.length} 个节拍
+                              </span>
+                            </div>
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              {SCENE_REWRITE_OPTIONS.map((item) => {
+                                const active = sceneRewriteMode === item.value
+                                return (
+                                  <Button
+                                    key={item.value}
+                                    type="button"
+                                    size="sm"
+                                    variant={item.value === "conflict" ? "default" : "outline"}
+                                    disabled={sceneRewriteMode !== null}
+                                    onClick={() => void handleRewriteScene(item.value)}
+                                    className={cn(
+                                      "rounded-full",
+                                      item.value === "conflict"
+                                        ? "bg-slate-900 text-white hover:bg-slate-800"
+                                        : "border-black/8 bg-white text-slate-700 hover:bg-slate-50",
+                                      active && "opacity-80"
+                                    )}
+                                    title={item.hint}
+                                  >
+                                    <Wand2 className="mr-2 h-4 w-4" />
+                                    {active ? "改写中..." : item.label}
+                                  </Button>
+                                )
+                              })}
+                            </div>
+                          </div>
                           <div className="grid gap-4 md:grid-cols-2">
                             <div className="space-y-2">
                               <Label className="text-slate-600">场景标题</Label>

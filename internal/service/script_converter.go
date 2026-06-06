@@ -63,6 +63,14 @@ type ConvertProgress struct {
 
 type ConvertProgressReporter func(ConvertProgress)
 
+type SceneRewriteRequest struct {
+	CurrentYAML  string
+	Source       ConvertRequest
+	ChapterIndex int
+	SceneIndex   int
+	Mode         string
+}
+
 const (
 	longFormTotalCharsThreshold    = 12000
 	longFormSingleChapterThreshold = 4500
@@ -591,6 +599,76 @@ func (sc *ScriptConverter) NormalizeEditedYAML(rawYAML string, genre, tone, paci
 	return sc.normalizeAndValidate(context.Background(), req, rawYAML)
 }
 
+// RewriteScene rewrites a single scene while preserving the surrounding YAML structure.
+func (sc *ScriptConverter) RewriteScene(ctx context.Context, req SceneRewriteRequest) (*ConvertResult, error) {
+	if strings.TrimSpace(req.CurrentYAML) == "" {
+		return nil, NewConvertError(ConvertErrorSchema, "current yaml is required", nil)
+	}
+	if err := sc.validateRequest(req.Source); err != nil {
+		return nil, err
+	}
+	if req.ChapterIndex < 0 || req.ChapterIndex >= len(req.Source.Chapters) {
+		return nil, NewConvertError(ConvertErrorSchema, "chapter index out of range", nil)
+	}
+
+	scriptYAML := &model.ScriptYAML{}
+	if err := yaml.Unmarshal([]byte(sanitizeLLMOutput(req.CurrentYAML)), scriptYAML); err != nil {
+		return nil, NewConvertError(ConvertErrorYAMLParse, "current yaml parse failed", err)
+	}
+	if req.ChapterIndex >= len(scriptYAML.Chapters) {
+		return nil, NewConvertError(ConvertErrorSchema, "chapter index exceeds current script", nil)
+	}
+	if req.SceneIndex < 0 || req.SceneIndex >= len(scriptYAML.Chapters[req.ChapterIndex].Scenes) {
+		return nil, NewConvertError(ConvertErrorSchema, "scene index out of range", nil)
+	}
+
+	currentChapter := scriptYAML.Chapters[req.ChapterIndex]
+	currentScene := currentChapter.Scenes[req.SceneIndex]
+	systemPrompt, userPrompt := sc.promptManager.SceneRewritePrompt(
+		req.Source,
+		req.Source.Chapters[req.ChapterIndex],
+		req.ChapterIndex,
+		currentChapter,
+		currentScene,
+		scriptYAML.DramatisPersonae,
+		scriptYAML.Settings,
+		req.Mode,
+	)
+	llmResp, err := sc.generateYAMLScript(ctx, systemPrompt, userPrompt)
+	if err != nil {
+		return nil, err
+	}
+
+	rewrittenScene, err := parseSceneRewriteOutput(llmResp.Content, req.ChapterIndex, req.SceneIndex)
+	if err != nil {
+		return nil, NewConvertError(ConvertErrorYAMLParse, "scene rewrite yaml parse failed", err)
+	}
+	scriptYAML.Chapters[req.ChapterIndex].Scenes[req.SceneIndex] = normalizeRewrittenScene(
+		rewrittenScene,
+		currentScene,
+		req.ChapterIndex,
+		req.SceneIndex,
+	)
+
+	mergedYAML, err := yaml.Marshal(scriptYAML)
+	if err != nil {
+		return nil, NewConvertError(ConvertErrorSerialization, "scene rewrite yaml serialization failed", err)
+	}
+
+	result, err := sc.NormalizeEditedYAML(
+		string(mergedYAML),
+		req.Source.Genre,
+		req.Source.Tone,
+		req.Source.Pacing,
+		len(req.Source.Chapters),
+	)
+	if err != nil {
+		return nil, err
+	}
+	result.Usage = llmResp.Usage
+	return result, nil
+}
+
 func (sc *ScriptConverter) validateRequest(req ConvertRequest) error {
 	if len(req.Chapters) < minConvertSourceChapters || len(req.Chapters) > maxConvertSourceChapters {
 		return NewConvertError(
@@ -644,6 +722,70 @@ func sanitizeLLMOutput(raw string) string {
 	trimmed = sanitizeKnownSequenceScalars(trimmed)
 
 	return trimmed
+}
+
+func parseSceneRewriteOutput(raw string, chapterIndex, sceneIndex int) (model.Scene, error) {
+	sanitized := sanitizeLLMOutput(raw)
+	var wrapped struct {
+		Scene model.Scene `yaml:"scene"`
+	}
+	if err := yaml.Unmarshal([]byte(sanitized), &wrapped); err == nil && sceneHasContent(wrapped.Scene) {
+		return wrapped.Scene, nil
+	}
+
+	var scene model.Scene
+	if err := yaml.Unmarshal([]byte(sanitized), &scene); err == nil && sceneHasContent(scene) {
+		return scene, nil
+	}
+
+	var script model.ScriptYAML
+	if err := yaml.Unmarshal([]byte(sanitized), &script); err == nil {
+		if chapterIndex < len(script.Chapters) && sceneIndex < len(script.Chapters[chapterIndex].Scenes) {
+			return script.Chapters[chapterIndex].Scenes[sceneIndex], nil
+		}
+	}
+
+	return model.Scene{}, fmt.Errorf("rewrite output did not contain a valid scene object")
+}
+
+func sceneHasContent(scene model.Scene) bool {
+	return strings.TrimSpace(scene.Title) != "" ||
+		strings.TrimSpace(scene.Goal) != "" ||
+		len(scene.Beats) > 0 ||
+		strings.TrimSpace(scene.Outcome) != ""
+}
+
+func normalizeRewrittenScene(next, current model.Scene, chapterIndex, sceneIndex int) model.Scene {
+	sceneID := fmt.Sprintf("ch%d.sc%d", chapterIndex+1, sceneIndex+1)
+	next.ID = sceneID
+	next.Title = preserveOrTrim(next.Title, current.Title)
+	next.Goal = preserveOrTrim(next.Goal, current.Goal)
+	next.Location = preserveOrTrim(next.Location, current.Location)
+	next.Time = preserveOrTrim(next.Time, current.Time)
+	next.POV = preserveOrTrim(next.POV, current.POV)
+	next.Mood = preserveOrTrim(next.Mood, current.Mood)
+	next.Outcome = preserveOrTrim(next.Outcome, current.Outcome)
+	if next.Beats == nil {
+		next.Beats = []model.Beat{}
+	}
+	for beatIndex := range next.Beats {
+		next.Beats[beatIndex].ID = fmt.Sprintf("%s.b%d", sceneID, beatIndex+1)
+		next.Beats[beatIndex].Type = strings.TrimSpace(next.Beats[beatIndex].Type)
+		next.Beats[beatIndex].Summary = strings.TrimSpace(next.Beats[beatIndex].Summary)
+		if next.Beats[beatIndex].Dialogue != nil {
+			next.Beats[beatIndex].Dialogue.Speaker = strings.TrimSpace(next.Beats[beatIndex].Dialogue.Speaker)
+			next.Beats[beatIndex].Dialogue.Content = strings.TrimSpace(next.Beats[beatIndex].Dialogue.Content)
+		}
+	}
+	return next
+}
+
+func preserveOrTrim(next, fallback string) string {
+	next = strings.TrimSpace(next)
+	if next == "" {
+		return strings.TrimSpace(fallback)
+	}
+	return next
 }
 
 func isLikelyTruncatedYAMLError(raw string, err error) bool {

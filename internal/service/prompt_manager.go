@@ -6,12 +6,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml"
+
 	"scene-script/config"
+	"scene-script/internal/model"
 )
 
 const defaultConvertSystemPrompt = "你是一名擅长小说改编的结构化剧本引擎。你的唯一任务是输出可被 YAML 解析器直接解析的合法 YAML。禁止解释、禁止分析、禁止 Markdown 代码块、禁止任何 YAML 之外的文本。"
 const defaultSummarizeSystemPrompt = "你是一位小说改编策划助手。你需要在不丢失关键情节的前提下，将长章节压缩成适合后续剧本生成的结构化摘要，只输出纯文本，不要输出 YAML、JSON、Markdown 标题或额外解释。"
 const defaultStructuredSummarySystemPrompt = "你是一位小说改编信息抽取助手。你需要把章节内容压缩为稳定、忠实、可机读的结构化摘要，并且必须只输出一个合法的 JSON object，不能输出 JSON 之外的任何文本。"
+const defaultSceneRewriteSystemPrompt = "你是一位局部剧本改写助手。你的唯一任务是改写单个 scene，并且只输出一个合法的 YAML scene 对象。禁止输出解释、禁止 Markdown 代码块、禁止输出 scene 之外的任何额外文本。"
 
 const defaultRepairSystemPrompt = "你是一位剧本 YAML 修复专家。你必须优先保证 YAML 可解析、结构完整、字段类型正确；若原结果疑似截断，必须丢弃残缺尾部并从头重写一份更紧凑的完整 YAML。只返回 YAML 正文。"
 
@@ -173,6 +177,51 @@ func (pm *PromptManager) ChapterSummaryStructuredPrompt(req ConvertRequest, chap
 	return systemPrompt, userPrompt
 }
 
+func (pm *PromptManager) SceneRewritePrompt(
+	req ConvertRequest,
+	sourceChapter ChapterInput,
+	chapterIndex int,
+	chapter model.Chapter,
+	scene model.Scene,
+	characters []model.Character,
+	settings []model.Setting,
+	mode string,
+) (systemPrompt, userPrompt string) {
+	systemPrompt = defaultSceneRewriteSystemPrompt
+
+	sceneYAMLBytes, _ := yaml.Marshal(scene)
+	sceneYAML := strings.TrimSpace(string(sceneYAMLBytes))
+	if sceneYAML == "" {
+		sceneYAML = "{}"
+	}
+
+	userPrompt = joinPromptSections(
+		fmt.Sprintf(`任务目标：
+- 当前只改写第 %d 章中的一个 scene
+- 改写模式：%s
+- 只输出一个 scene YAML 对象，字段必须严格包含：id, title, goal, location, time, pov, mood, beats, outcome
+- 不要输出 version、metadata、dramatis_personae、settings、chapters、consistency_report 等其他顶层字段
+
+改写要求：
+- scene.id 必须保持为 %s
+- beats 必须是 YAML sequence，beat.id 必须保持 chN.scN.bN 形式并从 1 开始连续编号
+- beat.type 只能是 action/dialogue/inner/exposition
+- 每个 beat 都必须有非空 summary
+- 当 beat.type 为 dialogue 或 inner 时，必须同时提供 dialogue.speaker 和 dialogue.content
+- 不要虚构原文章节中不存在的核心事实、人物关系或地点关系
+- 可以优化场景冲突、对白密度与节奏，但不能改写这一章的核心走向
+- 对 title/goal/outcome/dialogue.content 等长文本，优先使用 YAML block scalar（|-）
+- 只返回 scene YAML 正文，禁止解释`, chapterIndex+1, sceneRewriteModeInstruction(mode), scene.ID),
+		fmt.Sprintf("改编设定：\n- 体裁：%s\n- 语气：%s\n- 节奏：%s", req.Genre, req.Tone, req.Pacing),
+		sceneRewriteContext("人物注册表", rewriteCharacterNames(characters)),
+		sceneRewriteContext("地点注册表", rewriteSettingNames(settings)),
+		"当前章节原文：\n"+strings.TrimSpace(sourceChapter.Text),
+		"当前章节结构梗概：\n"+sceneRewriteChapterOutline(chapter),
+		"当前场景 YAML：\n"+sceneYAML,
+	)
+	return systemPrompt, userPrompt
+}
+
 func (pm *PromptManager) RepairPrompt(req ConvertRequest, rawYAML string, validationErr error, attempt int) (systemPrompt, userPrompt string) {
 	systemPrompt = defaultRepairSystemPrompt
 	if pm.cfg != nil && strings.TrimSpace(pm.cfg.RepairSystem) != "" {
@@ -276,6 +325,70 @@ func (pm *PromptManager) outputBudgetRule(req ConvertRequest) string {
 	default:
 		return "当源章节数为 3~5 章时，可保持常规细度：每章 2~4 个 scenes、每个 scene 2~5 个 beats，但仍需避免空转和重复描述"
 	}
+}
+
+func sceneRewriteModeInstruction(mode string) string {
+	switch mode {
+	case "fidelity":
+		return "更忠于原文：优先回收本章原文细节，不主动扩写额外冲突，不改变既有事实"
+	case "conflict":
+		return "更有冲突：强化角色目标、阻碍、张力和情绪对撞，但不能改写章节核心事实"
+	case "concise":
+		return "更紧凑：压缩重复铺陈，减少冗余 beats，让场景推进更利落"
+	default:
+		return "保持当前场景核心事实不变，做稳健改写"
+	}
+}
+
+func sceneRewriteContext(title string, items []string) string {
+	if len(items) == 0 {
+		return title + "：\n- 无"
+	}
+	return title + "：\n" + strings.Join(items, "\n")
+}
+
+func rewriteCharacterNames(characters []model.Character) []string {
+	lines := make([]string, 0, len(characters))
+	for _, character := range characters {
+		name := strings.TrimSpace(character.Name)
+		if name == "" {
+			continue
+		}
+		lines = append(lines, "- "+name)
+	}
+	return lines
+}
+
+func rewriteSettingNames(settings []model.Setting) []string {
+	lines := make([]string, 0, len(settings))
+	for _, setting := range settings {
+		name := strings.TrimSpace(setting.Name)
+		if name == "" {
+			continue
+		}
+		lines = append(lines, "- "+name)
+	}
+	return lines
+}
+
+func sceneRewriteChapterOutline(chapter model.Chapter) string {
+	lines := []string{
+		fmt.Sprintf("- 章节标题：%s", strings.TrimSpace(chapter.Title)),
+		fmt.Sprintf("- 章节摘要：%s", fallbackText(chapter.Summary, "无")),
+		fmt.Sprintf("- 场景数量：%d", len(chapter.Scenes)),
+	}
+	for _, scene := range chapter.Scenes {
+		lines = append(lines, fmt.Sprintf("- %s｜%s｜%s", fallbackText(scene.Title, "未命名场景"), fallbackText(scene.Location, "未设地点"), fallbackText(scene.Goal, "未设目标")))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fallbackText(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func (pm *PromptManager) repairStrategy(req ConvertRequest, rawYAML string, validationErr error) string {

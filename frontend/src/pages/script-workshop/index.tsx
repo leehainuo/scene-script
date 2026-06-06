@@ -47,7 +47,7 @@ import { cn } from "@/lib/utils"
 import { getAccessToken, getRefreshToken } from "@/lib/axios"
 import { useScriptWorkshopTasks } from "./use-script-workshop-tasks"
 import { toast } from "sonner"
-import { logout, saveScriptResult } from "@/services"
+import { logout, rewriteScriptScene, saveScriptResult } from "@/services"
 import { useAuthStore } from "@/stores"
 import { DetailView } from "./views/detail-view"
 import { HistoryView } from "./views/history-view"
@@ -57,6 +57,7 @@ import type {
   ScriptChapter,
   ScriptChapterInput,
   ScriptConvertRequest,
+  ScriptSceneRewriteMode,
   ScriptScene,
   ScriptYamlDocument,
 } from "@/types"
@@ -102,6 +103,7 @@ export default function ScriptWorkshopPage() {
   const [selectedSettingIndex, setSelectedSettingIndex] = useState(0)
   const [showValidationErrors, setShowValidationErrors] = useState(false)
   const [renameConfirm, setRenameConfirm] = useState<RenameConfirmState>(null)
+  const [sceneRewriteMode, setSceneRewriteMode] = useState<ScriptSceneRewriteMode | null>(null)
   const [floatingAction, setFloatingAction] = useState<"submit" | "reset" | null>(null)
   const [workspaceInputMode, setWorkspaceInputMode] = useState<WorkspaceInputMode>("chapter")
   const [importSourceText, setImportSourceText] = useState("")
@@ -736,6 +738,41 @@ export default function ScriptWorkshopPage() {
     }
   }
 
+  async function handleRewriteScene(mode: ScriptSceneRewriteMode) {
+    if (!activeResult || !liveYaml || !selectedNode || selectedNode.kind !== "scene") {
+      toast.error("请先在结构树中选中一个场景后再使用 AI 改写。")
+      return
+    }
+
+    setSceneRewriteMode(mode)
+    try {
+      const response = await rewriteScriptScene(activeResult.id, {
+        yaml: liveYaml,
+        chapter_index: selectedNode.chapterIndex,
+        scene_index: selectedNode.sceneIndex ?? 0,
+        mode,
+      })
+      if (response.code !== 0 || !response.data?.yaml) {
+        toast.error(response.msg || "场景 AI 改写失败，请稍后再试。")
+        return
+      }
+
+      const nextDocument = parseScriptYaml(response.data.yaml)
+      if (!nextDocument) {
+        toast.error("场景已改写，但返回结果暂时无法解析。")
+        return
+      }
+
+      setEditableDocument(nextDocument)
+      setShowValidationErrors(false)
+      toast.success("AI 已改写当前场景，你可以继续微调后再保存。")
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "场景 AI 改写失败，请稍后再试。"))
+    } finally {
+      setSceneRewriteMode(null)
+    }
+  }
+
   const semanticTree = useMemo(() => buildSemanticTree(editableDocument), [editableDocument])
   const activeResultYaml = activeResult?.yaml ?? ""
   const liveYaml = editableDocument ? serializeScriptYaml(editableDocument) : activeResultYaml
@@ -844,10 +881,7 @@ export default function ScriptWorkshopPage() {
     searchParams.get("view") === "workspace"
       ? (searchParams.get("view") as SidebarView)
       : "workspace"
-  const selectedNode = useMemo(
-    () => findTreeNodeByID(semanticTree, selectedNodeId) ?? semanticTree[0] ?? null,
-    [semanticTree, selectedNodeId]
-  )
+  const selectedNode = findTreeNodeByID(semanticTree, selectedNodeId) ?? semanticTree[0] ?? null
   const selectedChapterData = selectedNode
     ? editableDocument?.chapters[selectedNode.chapterIndex] ?? null
     : null
@@ -1071,6 +1105,8 @@ export default function ScriptWorkshopPage() {
                 currentPovOptions={currentPovOptions}
                 currentLocationOptions={currentLocationOptions}
                 currentSpeakerOptions={currentSpeakerOptions}
+                sceneRewriteMode={sceneRewriteMode}
+                handleRewriteScene={handleRewriteScene}
               />
             ) : null}
           </section>
