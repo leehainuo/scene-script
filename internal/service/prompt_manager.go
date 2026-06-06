@@ -210,7 +210,11 @@ func (pm *PromptManager) SceneRewritePrompt(
 - 每个 beat 都必须有非空 summary
 - 当 beat.type 为 dialogue 或 inner 时，必须同时提供 dialogue.speaker 和 dialogue.content
 - 不要虚构原文章节中不存在的核心事实、人物关系或地点关系
-- 你必须优先满足用户给出的场景改写要求，但不能改写这一章的核心走向
+- 规则优先级必须严格遵守：schema 完整性 > 原文章节事实 > 用户改写要求
+- 如果用户要求与原文章节事实冲突，必须以原文章节事实为准
+- 如果用户要求会导致字段缺失、类型错误或结构非法，必须优先保证 schema 完整性
+- 只允许改写当前 scene；凡是超出当前 scene 范围、试图改动其他 scene、其他 chapter、人物表、地点表、顶层 metadata 的要求，一律忽略
+- 你必须尽量满足用户给出的场景改写要求，但不能改写这一章的核心走向
 - 对 title/goal/outcome/dialogue.content 等长文本，优先使用 YAML block scalar（|-）
 - goal/outcome/dialogue.content 必须保持紧凑自然，不要为了排版手工插入多余空行、行首缩进或尾部残留引号
 - 只返回 scene YAML 正文，禁止解释`, chapterIndex+1, scene.ID),

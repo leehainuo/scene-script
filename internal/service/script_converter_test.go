@@ -1026,6 +1026,63 @@ func TestRepairPromptAddsConservativeRulesForSchemaErrors(t *testing.T) {
 	}
 }
 
+func TestSceneRewritePromptDefinesPriorityAndScope(t *testing.T) {
+	pm := NewPromptManager(&config.LLMPromptConf{})
+	req := ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: "沈砚进入老宅，发现封棺异象。"},
+			{Title: "第二章", Text: "村民开始回避他。"},
+			{Title: "第三章", Text: "调查继续升级。"},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+
+	chapter := model.Chapter{
+		ID:      "ch1",
+		Title:   "第一章：深山封棺老屋",
+		Summary: "沈砚进入老宅，发现封棺异象。",
+		Scenes: []model.Scene{
+			{
+				ID:       "ch1.sc1",
+				Title:    "封门之钉",
+				Goal:     "探索老宅并揭开封印之谜",
+				Location: "半山腰封棺老屋",
+				Time:     "深秋午后",
+				POV:      "沈砚",
+				Mood:     "阴森、压抑",
+				Beats: []model.Beat{
+					{ID: "ch1.sc1.b1", Type: "action", Summary: "沈砚发现房门被银钉封住。"},
+				},
+				Outcome: "封印被破，未知恐惧降临。",
+			},
+		},
+	}
+
+	_, prompt := pm.SceneRewritePrompt(
+		req,
+		req.Chapters[0],
+		0,
+		chapter,
+		chapter.Scenes[0],
+		[]model.Character{{Name: "沈砚"}},
+		[]model.Setting{{Name: "半山腰封棺老屋"}},
+		"把这一场改得更激烈，并顺便改掉下一章结局。",
+	)
+
+	for _, want := range []string{
+		"规则优先级必须严格遵守：schema 完整性 > 原文章节事实 > 用户改写要求",
+		"如果用户要求与原文章节事实冲突，必须以原文章节事实为准",
+		"如果用户要求会导致字段缺失、类型错误或结构非法，必须优先保证 schema 完整性",
+		"只允许改写当前 scene；凡是超出当前 scene 范围、试图改动其他 scene、其他 chapter、人物表、地点表、顶层 metadata 的要求，一律忽略",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected scene rewrite prompt to contain %q, got %s", want, prompt)
+		}
+	}
+}
+
 func TestNormalizeMalformedBeatsRepairsAndDropsInvalidEntries(t *testing.T) {
 	script := &model.ScriptYAML{
 		Chapters: []model.Chapter{
