@@ -157,6 +157,7 @@ func (pm *PromptManager) RepairPrompt(req ConvertRequest, rawYAML string, valida
 
 	userPrompt = joinPromptSections(
 		strings.TrimSpace(userPrompt),
+		pm.repairGuardrails(attempt),
 		pm.repairStrategy(req, rawYAML, validationErr),
 		"用于必要时从头重写的章节输入：\n"+chapterInputText(req.Chapters),
 		pm.schemaContract(req, now),
@@ -234,15 +235,33 @@ func (pm *PromptManager) repairStrategy(req ConvertRequest, rawYAML string, vali
 修复策略：
 - 不要试图续写残缺尾部
 - 必须从头重写一份完整 YAML
+- 采用“最小合格输出”策略：先保证 version、metadata、dramatis_personae、settings、chapters、consistency_report 六个顶层结构完整
 - 保持章节数为 %d 章且 chapter.id 连续
+- 如果 scene 或 beat 细节信息不足，可以压缩数量，但不得让 chapters/scenes/beats 字段缺失
+- 如果数组字段没有可靠内容，优先输出空数组，不要编造角色、地点、关系或伏笔
 - 必须显著压缩输出体量，优先保住完整结构
-- 严禁再次输出半截引号、半截列表项、半截 beat.id`, len(req.Chapters))
+- 严禁再次输出半截引号、半截列表项、半截 beat.id
+- 不得输出 Schema 之外的新字段或解释文本`, len(req.Chapters))
 	}
 	return `本次失败属于 YAML 结构或 schema 约束问题。
 
 修复策略：
 - 在尽量保持原故事语义不变的前提下修复字段、类型和结构
-- 如果某段原始 YAML 已明显损坏，可依据章节输入重写该段，但不要遗漏任何章节`
+- 如果某段原始 YAML 已明显损坏，可依据章节输入重写该段，但不要遗漏任何章节
+- 如果无法确认某个数组字段的具体内容，优先输出空数组，不要为了“补齐”而虚构
+- 如果无法充分展开 beat 细节，优先保证 top-level、chapter、scene 结构完整
+- 不得输出 Schema 之外的新字段或解释文本`
+}
+
+func (pm *PromptManager) repairGuardrails(attempt int) string {
+	return fmt.Sprintf(`Repair 基础守则：
+- 当前 repair 尝试次数：%d
+- 只能输出一份完整 YAML，禁止解释修复过程
+- 不得输出 Schema 之外的新顶层字段
+- 不得新增原文未出现的核心角色、核心地点或关键因果
+- 如果信息不充分，优先使用空数组，而不是虚构内容
+- 如果细节不足，优先输出“最小可校验结构”，再逐层补齐 scene 和 beat
+- consistency_report 必须始终存在，且三个字段都必须是数组`, attempt)
 }
 
 func repairYAMLContext(rawYAML string) string {

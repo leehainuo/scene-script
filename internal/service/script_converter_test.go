@@ -566,10 +566,45 @@ func TestRepairPromptFlagsTruncation(t *testing.T) {
 	}
 
 	_, prompt := pm.RepairPrompt(req, "chapters:\n  - id: \"", fmt.Errorf("yaml parse failed: could not find end character of double-quoted text"), 1)
-	if !strings.Contains(prompt, "本次失败更接近“输出被截断”") {
-		t.Fatalf("expected truncation strategy in repair prompt, got %s", prompt)
+	for _, want := range []string{
+		"Repair 基础守则：",
+		"本次失败更接近“输出被截断”",
+		"采用“最小合格输出”策略",
+		"如果数组字段没有可靠内容，优先输出空数组",
+		"不得输出 Schema 之外的新字段或解释文本",
+		"用于必要时从头重写的章节输入",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected repair prompt to contain %q, got %s", want, prompt)
+		}
 	}
-	if !strings.Contains(prompt, "用于必要时从头重写的章节输入") {
-		t.Fatalf("expected chapter input context in repair prompt, got %s", prompt)
+}
+
+func TestRepairPromptAddsConservativeRulesForSchemaErrors(t *testing.T) {
+	pm := NewPromptManager(&config.LLMPromptConf{})
+	req := ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: "第一章正文"},
+			{Title: "第二章", Text: "第二章正文"},
+			{Title: "第三章", Text: "第三章正文"},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+
+	_, prompt := pm.RepairPrompt(req, "version: \"1.0\"\nchapters:\n  - id: chapter-1", fmt.Errorf("chapters[0].id must match chN"), 2)
+	for _, want := range []string{
+		"Repair 基础守则：",
+		"当前 repair 尝试次数：2",
+		"如果信息不充分，优先使用空数组，而不是虚构内容",
+		"本次失败属于 YAML 结构或 schema 约束问题。",
+		"如果无法确认某个数组字段的具体内容，优先输出空数组",
+		"如果无法充分展开 beat 细节，优先保证 top-level、chapter、scene 结构完整",
+		"不得输出 Schema 之外的新字段或解释文本",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected schema repair prompt to contain %q, got %s", want, prompt)
+		}
 	}
 }
