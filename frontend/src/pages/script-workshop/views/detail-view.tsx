@@ -1,4 +1,4 @@
-import type { Dispatch, RefObject, SetStateAction } from "react"
+import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from "react"
 import { Copy, Download, GripVertical, Trash2 } from "lucide-react"
 import { ConsistencyPanel } from "@/components/script-workshop/consistency-panel"
 import { ScriptDetailHeader } from "@/components/script-workshop/detail-header"
@@ -30,6 +30,17 @@ type Consistency = {
   rolesMissing: string[]
   settingsMissing: string[]
   danglingRefs: string[]
+}
+
+function parseInlineList(value: string) {
+  return value
+    .split(/[,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function formatInlineList(values?: string[]) {
+  return (values ?? []).join("，")
 }
 
 type DetailViewProps = {
@@ -160,6 +171,17 @@ export function DetailView({
   currentLocationOptions,
   currentSpeakerOptions,
 }: DetailViewProps) {
+  const [traitsDraft, setTraitsDraft] = useState("")
+  const [aliasesDraft, setAliasesDraft] = useState("")
+
+  useEffect(() => {
+    setTraitsDraft(formatInlineList(selectedCharacter?.traits))
+  }, [selectedCharacter?.name, activeRegistryIndex, registryView])
+
+  useEffect(() => {
+    setAliasesDraft(formatInlineList(selectedSetting?.aliases))
+  }, [selectedSetting?.name, activeRegistryIndex, registryView])
+
   return (
     <div className="mx-auto max-w-[1040px] space-y-6">
       {!activeResult ? (
@@ -1052,16 +1074,19 @@ export function DetailView({
                             <div className="space-y-2">
                               <Label className="text-slate-600">性格标签</Label>
                               <Input
-                                value={selectedCharacter.traits.join("，")}
-                                onChange={(event) =>
+                                value={traitsDraft}
+                                onChange={(event) => {
+                                  const nextValue = event.target.value
+                                  setTraitsDraft(nextValue)
                                   updateScriptCharacter(activeRegistryIndex, (item) => ({
                                     ...item,
-                                    traits: event.target.value
-                                      .split(/[,，]/)
-                                      .map((value) => value.trim())
-                                      .filter(Boolean),
+                                    traits: parseInlineList(nextValue),
                                   }))
-                                }
+                                }}
+                                onBlur={() => {
+                                  const normalized = formatInlineList(parseInlineList(traitsDraft))
+                                  setTraitsDraft(normalized)
+                                }}
                                 placeholder="冷静，执着"
                                 className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
                               />
@@ -1179,16 +1204,19 @@ export function DetailView({
                         <div className="space-y-2">
                           <Label className="text-slate-600">地点别名（可选）</Label>
                           <Input
-                            value={(selectedSetting.aliases ?? []).join("，")}
-                            onChange={(event) =>
+                            value={aliasesDraft}
+                            onChange={(event) => {
+                              const nextValue = event.target.value
+                              setAliasesDraft(nextValue)
                               updateScriptSetting(activeRegistryIndex, (item) => ({
                                 ...item,
-                                aliases: event.target.value
-                                  .split(/[,，]/)
-                                  .map((value) => value.trim())
-                                  .filter(Boolean),
+                                aliases: parseInlineList(nextValue),
                               }))
-                            }
+                            }}
+                            onBlur={() => {
+                              const normalized = formatInlineList(parseInlineList(aliasesDraft))
+                              setAliasesDraft(normalized)
+                            }}
                             placeholder="例如：城南老宅院落，老宅院落"
                             className="h-11 rounded-2xl border-black/8 bg-white text-slate-900"
                           />
