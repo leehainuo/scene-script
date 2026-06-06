@@ -60,6 +60,15 @@ export const PACING_OPTIONS: Array<{ label: string; value: Pacing; hint: string 
   { label: "中节奏", value: "medium", hint: "兼顾推进、情绪和角色刻画" },
   { label: "慢节奏", value: "slow", hint: "更强调氛围、心理和留白" },
 ]
+export const BEAT_TYPE_OPTIONS = [
+  { value: "action", label: "动作", hint: "人物行为、调度与具体动作推进" },
+  { value: "dialogue", label: "对白", hint: "角色明确说出口的台词" },
+  { value: "inner", label: "内心", hint: "角色心理活动或内心独白" },
+  { value: "exposition", label: "叙述", hint: "背景交代、信息说明或画面描述" },
+] as const
+export const BEAT_TYPE_LABEL_MAP: Record<string, string> = Object.fromEntries(
+  BEAT_TYPE_OPTIONS.map((item) => [item.value, item.label])
+)
 
 export const DEFAULT_CHAPTERS: ScriptChapterInput[] = [
   { title: "第一章", text: "" },
@@ -81,6 +90,13 @@ export const STATUS_FILTER_OPTIONS: Array<{ value: ScriptTaskStatus; label: stri
 ]
 
 export const WORKSPACE_DRAFT_FORM_ID = "script-workshop-draft-form"
+
+export function getBeatTypeLabel(type?: string) {
+  if (!type) {
+    return "未设置类型"
+  }
+  return BEAT_TYPE_LABEL_MAP[type] ?? type
+}
 
 export function buildSemanticTree(document: ScriptYamlDocument | null): ScriptTreeNode[] {
   if (!document) {
@@ -106,7 +122,7 @@ export function buildSemanticTree(document: ScriptYamlDocument | null): ScriptTr
         description:
           beat.type === "dialogue" || beat.type === "inner"
             ? `${beat.dialogue?.speaker || "未设置角色"}：${beat.dialogue?.content || "待补充对白"}`
-            : beat.type,
+            : getBeatTypeLabel(beat.type),
         kind: "beat",
         chapterIndex,
         sceneIndex,

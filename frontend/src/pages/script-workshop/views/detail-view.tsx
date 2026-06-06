@@ -9,7 +9,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { formatScriptStyleSummary, getPacingLabel } from "@/lib/script-display"
-import { formatDateTime } from "@/lib/script-workshop"
+import {
+  BEAT_TYPE_OPTIONS,
+  formatDateTime,
+  getBeatTypeLabel,
+} from "@/lib/script-workshop"
 import type { RegistryTab, ResultView, ScriptTreeNode, WorkshopResult } from "@/lib/script-workshop"
 import { cn } from "@/lib/utils"
 import type { ScriptBeat, ScriptChapter, ScriptScene, ScriptTaskMeta, ScriptYamlDocument } from "@/types"
@@ -624,7 +628,7 @@ export function DetailView({
                                     <div className="min-w-0 flex-1">
                                       <div className="flex flex-wrap items-center gap-2">
                                         <span className="rounded-full border border-black/8 bg-slate-50 px-2.5 py-0.5 text-xs text-slate-500">
-                                          {beat.type}
+                                          {getBeatTypeLabel(beat.type)}
                                         </span>
                                         <span className="text-sm font-medium text-slate-900">
                                           {beat.summary || `节拍 ${beatIndex + 1}`}
@@ -670,9 +674,9 @@ export function DetailView({
                       {selectedNode.kind === "beat" && selectedBeatData ? (
                         <div className="space-y-4">
                           <div className="flex flex-wrap gap-2">
-                            {(["action", "dialogue", "inner", "exposition"] as const).map((type) => (
+                            {BEAT_TYPE_OPTIONS.map((item) => (
                               <button
-                                key={type}
+                                key={item.value}
                                 type="button"
                                 onClick={() =>
                                   updateScriptBeat(
@@ -681,9 +685,9 @@ export function DetailView({
                                     selectedNode.beatIndex ?? 0,
                                     (beat) => ({
                                       ...beat,
-                                      type,
+                                      type: item.value,
                                       dialogue:
-                                        type === "dialogue" || type === "inner"
+                                        item.value === "dialogue" || item.value === "inner"
                                           ? beat.dialogue ?? { speaker: "", content: "" }
                                           : undefined,
                                     })
@@ -691,12 +695,13 @@ export function DetailView({
                                 }
                                 className={cn(
                                   "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                                  selectedBeatData.type === type
+                                  selectedBeatData.type === item.value
                                     ? "border-sky-200 bg-sky-50 text-sky-700"
                                     : "border-black/8 bg-white text-slate-500 hover:bg-slate-50"
                                 )}
+                                title={item.hint}
                               >
-                                {type}
+                                {item.label}
                               </button>
                             ))}
                           </div>
