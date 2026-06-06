@@ -233,6 +233,9 @@ func (pm *PromptManager) schemaContract(req ConvertRequest, now time.Time) strin
 - 如果无法充分展开细节，优先保证 top-level、chapter、scene 的结构完整，再压缩 beat 细节
 - 不要跨章节虚构原文未出现的人物关系、地点关系或关键事件因果
 - consistency_report 中三个字段必须始终存在，允许为空数组
+- 每个 beat 都必须有非空 summary
+- 当 beat.type 为 dialogue 或 inner 时，必须同时输出完整 dialogue 对象，且 dialogue.speaker 与 dialogue.content 都不能为空
+- 如果没有可靠对白内容，不要输出 dialogue/inner 却缺少 dialogue；应减少 beat 数量，或改写为带 summary 的 action/exposition
 - 下列字段必须始终输出为 YAML sequence，哪怕只有 1 个元素也要写成列表项形式，禁止写成普通字符串：
   - dramatis_personae[].traits
   - dramatis_personae[].relations
@@ -251,6 +254,7 @@ func (pm *PromptManager) schemaContract(req ConvertRequest, now time.Time) strin
   relations:
     - "与陈阿婆构成记忆与遗愿的镜像关系"
 - 输出体量必须受控，优先保证完整、可解析、可校验，绝不为了细节堆砌而输出超长 YAML
+- 对 9~12 章的紧凑输出，宁可减少 beats 数量，也不要输出缺少 summary 或缺少 dialogue 的残缺 beat
 - 对 summary/goal/outcome/description/title/dialogue.content 等长文本字段，优先输出为 YAML block scalar（|-），避免长中文里的引号破坏 YAML
 - 只能输出 YAML，禁止输出 Markdown 代码块`,
 		screenplaySchemaSynopsis,
@@ -284,6 +288,7 @@ func (pm *PromptManager) repairStrategy(req ConvertRequest, rawYAML string, vali
 - 采用“最小合格输出”策略：先保证 version、metadata、dramatis_personae、settings、chapters、consistency_report 六个顶层结构完整
 - 保持章节数为 %d 章且 chapter.id 连续
 - 如果 scene 或 beat 细节信息不足，可以压缩数量，但不得让 chapters/scenes/beats 字段缺失
+- 每个 beat 仍必须完整：summary 不可缺失；dialogue/inner 必须带完整 dialogue 对象；如果做不到，宁可减少 beats 数量
 - 如果数组字段没有可靠内容，优先输出空数组，不要编造角色、地点、关系或伏笔
 - 必须显著压缩输出体量，优先保住完整结构
 - 严禁再次输出半截引号、半截列表项、半截 beat.id
@@ -296,6 +301,7 @@ func (pm *PromptManager) repairStrategy(req ConvertRequest, rawYAML string, vali
 - 如果某段原始 YAML 已明显损坏，可依据章节输入重写该段，但不要遗漏任何章节
 - 如果无法确认某个数组字段的具体内容，优先输出空数组，不要为了“补齐”而虚构
 - 如果无法充分展开 beat 细节，优先保证 top-level、chapter、scene 结构完整
+- 如果某个 beat 缺少必需信息，优先删除该 beat 或将其改写为带 summary 的 exposition/action，不要保留残缺的 dialogue/inner beat
 - 不得输出 Schema 之外的新字段或解释文本`
 }
 

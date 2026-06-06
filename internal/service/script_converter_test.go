@@ -254,6 +254,8 @@ func TestBuildPrompt(t *testing.T) {
 		`错误示例：traits: "敏锐、孤勇、理性中存有共情"`,
 		"不得输出 Schema 之外的新顶层字段",
 		"如果某个数组字段当前没有可靠内容，优先输出空数组",
+		"每个 beat 都必须有非空 summary",
+		"如果没有可靠对白内容，不要输出 dialogue/inner 却缺少 dialogue",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q: %s", want, prompt)
@@ -927,10 +929,69 @@ func TestRepairPromptAddsConservativeRulesForSchemaErrors(t *testing.T) {
 		"本次失败属于 YAML 结构或 schema 约束问题。",
 		"如果无法确认某个数组字段的具体内容，优先输出空数组",
 		"如果无法充分展开 beat 细节，优先保证 top-level、chapter、scene 结构完整",
+		"如果某个 beat 缺少必需信息，优先删除该 beat 或将其改写为带 summary 的 exposition/action",
 		"不得输出 Schema 之外的新字段或解释文本",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("expected schema repair prompt to contain %q, got %s", want, prompt)
 		}
+	}
+}
+
+func TestNormalizeMalformedBeatsRepairsAndDropsInvalidEntries(t *testing.T) {
+	script := &model.ScriptYAML{
+		Chapters: []model.Chapter{
+			{
+				ID:      "ch1",
+				Title:   "第一章",
+				Summary: "摘要",
+				Scenes: []model.Scene{
+					{
+						ID:       "ch1.sc1",
+						Title:    "场景一",
+						Goal:     "目标",
+						Location: "旧宅",
+						Time:     "Night",
+						POV:      "张三",
+						Mood:     "紧张",
+						Outcome:  "收尾",
+						Beats: []model.Beat{
+							{
+								ID:       "ch1.sc1.b1",
+								Type:     "dialogue",
+								Dialogue: &model.Dialogue{Speaker: "张三", Content: "门后有人。"},
+							},
+							{
+								ID:      "ch1.sc1.b2",
+								Type:    "inner",
+								Summary: "张三意识到不对劲",
+							},
+							{
+								ID:   "ch1.sc1.b3",
+								Type: "dialogue",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	fixed, dropped := normalizeMalformedBeats(script)
+	if fixed == 0 {
+		t.Fatalf("expected malformed beats to be fixed")
+	}
+	if dropped != 1 {
+		t.Fatalf("expected 1 beat to be dropped, got %d", dropped)
+	}
+	beats := script.Chapters[0].Scenes[0].Beats
+	if len(beats) != 2 {
+		t.Fatalf("expected 2 beats after normalization, got %d", len(beats))
+	}
+	if beats[0].Summary == "" {
+		t.Fatalf("expected summary to be derived from dialogue content")
+	}
+	if beats[1].Type != "exposition" || beats[1].Dialogue != nil {
+		t.Fatalf("expected incomplete inner beat to downgrade to exposition, got %#v", beats[1])
 	}
 }

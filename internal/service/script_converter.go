@@ -872,6 +872,16 @@ func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req Convert
 		return nil, NewConvertError(ConvertErrorYAMLParse, "yaml parse failed", parseErr)
 	}
 
+	beatFixes, beatDrops := normalizeMalformedBeats(scriptYAML)
+	if beatFixes > 0 || beatDrops > 0 {
+		logn.Debug("script beat normalization applied",
+			TaskLogFields(ctx, "beat_normalized",
+				zap.Int("beat_fixes", beatFixes),
+				zap.Int("beat_drops", beatDrops),
+			)...,
+		)
+	}
+
 	schemaErr := sc.validateSchema(scriptYAML, req)
 	if schemaErr != nil {
 		logn.Debug("script schema validation failed", TaskLogFields(ctx, "schema_invalid", zap.Error(schemaErr))...)
@@ -890,6 +900,83 @@ func (sc *ScriptConverter) normalizeAndValidate(ctx context.Context, req Convert
 		Summary:           sc.generateSummary(scriptYAML),
 		ConsistencyReport: scriptYAML.ConsistencyReport,
 	}, nil
+}
+
+func normalizeMalformedBeats(script *model.ScriptYAML) (fixed int, dropped int) {
+	for chapterIndex := range script.Chapters {
+		for sceneIndex := range script.Chapters[chapterIndex].Scenes {
+			scene := &script.Chapters[chapterIndex].Scenes[sceneIndex]
+			if scene.Beats == nil {
+				continue
+			}
+			normalized := make([]model.Beat, 0, len(scene.Beats))
+			for _, beat := range scene.Beats {
+				nextBeat, keep, changed := normalizeBeat(beat)
+				if changed {
+					fixed++
+				}
+				if !keep {
+					dropped++
+					continue
+				}
+				normalized = append(normalized, nextBeat)
+			}
+			scene.Beats = normalized
+		}
+	}
+	return fixed, dropped
+}
+
+func normalizeBeat(beat model.Beat) (model.Beat, bool, bool) {
+	changed := false
+	beat.Type = strings.TrimSpace(beat.Type)
+	beat.Summary = strings.TrimSpace(beat.Summary)
+	if beat.Dialogue != nil {
+		beat.Dialogue.Speaker = strings.TrimSpace(beat.Dialogue.Speaker)
+		beat.Dialogue.Content = strings.TrimSpace(beat.Dialogue.Content)
+		if beat.Dialogue.Speaker == "" && beat.Dialogue.Content == "" {
+			beat.Dialogue = nil
+			changed = true
+		}
+	}
+
+	if beat.Summary == "" && beat.Dialogue != nil && beat.Dialogue.Content != "" {
+		beat.Summary = summarizeBeatText(beat.Dialogue.Content)
+		changed = true
+	}
+
+	if beat.Type == "dialogue" || beat.Type == "inner" {
+		if beat.Dialogue == nil || strings.TrimSpace(beat.Dialogue.Speaker) == "" || strings.TrimSpace(beat.Dialogue.Content) == "" {
+			if beat.Summary != "" {
+				// Downgrade malformed dialogue-like beats into exposition to preserve structure without fabricating dialogue payloads.
+				beat.Type = "exposition"
+				beat.Dialogue = nil
+				changed = true
+			}
+		}
+	}
+
+	if beat.Summary == "" {
+		return beat, false, true
+	}
+	if (beat.Type == "dialogue" || beat.Type == "inner") && beat.Dialogue == nil {
+		return beat, false, true
+	}
+	return beat, true, changed
+}
+
+func summarizeBeatText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) <= 24 {
+		return text
+	}
+	return string(runes[:24]) + "..."
 }
 
 func isRepairableConvertError(err error) bool {
