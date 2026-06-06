@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	einoSchema "github.com/cloudwego/eino/schema"
@@ -69,6 +70,7 @@ const (
 	minConvertSourceChapters       = 3
 	maxConvertSourceChapters       = 12
 	longFormChapterCountThreshold  = 8
+	longFormSummaryConcurrency     = 3
 )
 
 // NewScriptConverter - Create a new script converter.
@@ -258,87 +260,56 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 		TaskLogFields(ctx, "long_form_summary_started",
 			zap.Int("chapter_count", len(req.Chapters)),
 			zap.Int("target_chars", targetChars),
+			zap.Int("concurrency_limit", minInt(longFormSummaryConcurrency, len(req.Chapters))),
 			zap.Bool("structured_summary_enabled", structuredEnabled),
 		)...,
 	)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	usagesByIndex := make([]*einoSchema.TokenUsage, len(req.Chapters))
+	semaphore := make(chan struct{}, minInt(longFormSummaryConcurrency, len(req.Chapters)))
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
 	for index, chapter := range req.Chapters {
-		chapterStartedAt := time.Now()
-		chapterTitle := strings.TrimSpace(chapter.Title)
-		charCount := len([]rune(strings.TrimSpace(chapter.Text)))
-		finalMode := "text"
-		fallbackReason := ""
-
-		logn.Debug("script converter chapter summary started",
-			TaskLogFields(ctx, "long_form_chapter_summary_started",
-				zap.Int("chapter_index", index),
-				zap.String("chapter_title", chapterTitle),
-				zap.Int("source_char_count", charCount),
-				zap.Bool("structured_summary_enabled", structuredEnabled),
-			)...,
-		)
-
-		if structuredLLM, ok := sc.llm.(StructuredSummaryProvider); ok {
-			systemPrompt, userPrompt := sc.promptManager.ChapterSummaryStructuredPrompt(req, chapter, index, targetChars)
-			resp, err := structuredLLM.GenerateStructuredChapterSummary(ctx, systemPrompt, userPrompt)
-			if err == nil {
-				finalMode = "structured"
-				compressed.Chapters[index] = ChapterInput{
-					Title: chapter.Title,
-					Text:  normalizeStructuredChapterSummary(chapter.Title, resp.Summary),
-				}
-				usages = append(usages, resp.Usage)
-				logn.Debug("script converter chapter summary done",
-					TaskLogFields(ctx, "long_form_chapter_summary_done",
-						zap.Int("chapter_index", index),
-						zap.String("chapter_title", chapterTitle),
-						zap.String("summary_mode", finalMode),
-						zap.Int("source_char_count", charCount),
-						zap.Int("summary_char_count", len([]rune(compressed.Chapters[index].Text))),
-						zap.Int64("elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
-						zap.Bool("fallback_triggered", false),
-						zap.Any("usage", resp.Usage),
-					)...,
-				)
-				continue
+		wg.Add(1)
+		go func(index int, chapter ChapterInput) {
+			defer wg.Done()
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				return
 			}
-			fallbackReason = err.Error()
-			logn.Warn("structured summary generation failed, fallback to text summary",
-				TaskLogFields(ctx, "long_form_summary_fallback",
-					zap.Int("chapter_index", index),
-					zap.String("chapter_title", chapterTitle),
-					zap.Int("source_char_count", charCount),
-					zap.String("fallback_from", "structured"),
-					zap.String("fallback_to", "text"),
-					zap.Int64("structured_elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
-					zap.Error(err),
-				)...,
-			)
-		}
+			defer func() { <-semaphore }()
 
-		systemPrompt, userPrompt := sc.promptManager.ChapterSummaryPrompt(req, chapter, index, targetChars)
-		resp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
-		if err != nil {
-			return ConvertRequest{}, nil, err
-		}
+			summaryText, usage, err := sc.summarizeChapterForLongForm(ctx, req, chapter, index, targetChars, structuredEnabled)
+			if err != nil {
+				select {
+				case errCh <- err:
+					cancel()
+				default:
+				}
+				return
+			}
+			compressed.Chapters[index] = ChapterInput{
+				Title: chapter.Title,
+				Text:  summaryText,
+			}
+			usagesByIndex[index] = usage
+		}(index, chapter)
+	}
+	wg.Wait()
 
-		compressed.Chapters[index] = ChapterInput{
-			Title: chapter.Title,
-			Text:  normalizeChapterSummary(chapter.Title, resp.Content),
+	select {
+	case err := <-errCh:
+		return ConvertRequest{}, nil, err
+	default:
+	}
+
+	for _, usage := range usagesByIndex {
+		if usage != nil {
+			usages = append(usages, usage)
 		}
-		usages = append(usages, resp.Usage)
-		logn.Debug("script converter chapter summary done",
-			TaskLogFields(ctx, "long_form_chapter_summary_done",
-				zap.Int("chapter_index", index),
-				zap.String("chapter_title", chapterTitle),
-				zap.String("summary_mode", finalMode),
-				zap.Int("source_char_count", charCount),
-				zap.Int("summary_char_count", len([]rune(compressed.Chapters[index].Text))),
-				zap.Int64("elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
-				zap.Bool("fallback_triggered", fallbackReason != ""),
-				zap.String("fallback_reason", fallbackReason),
-				zap.Any("usage", resp.Usage),
-			)...,
-		)
 	}
 
 	logn.Debug("script converter long form summary completed",
@@ -350,6 +321,79 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 		)...,
 	)
 	return compressed, mergeTokenUsage(usages...), nil
+}
+
+func (sc *ScriptConverter) summarizeChapterForLongForm(ctx context.Context, req ConvertRequest, chapter ChapterInput, index int, targetChars int, structuredEnabled bool) (string, *einoSchema.TokenUsage, error) {
+	chapterStartedAt := time.Now()
+	chapterTitle := strings.TrimSpace(chapter.Title)
+	charCount := len([]rune(strings.TrimSpace(chapter.Text)))
+	finalMode := "text"
+	fallbackReason := ""
+
+	logn.Debug("script converter chapter summary started",
+		TaskLogFields(ctx, "long_form_chapter_summary_started",
+			zap.Int("chapter_index", index),
+			zap.String("chapter_title", chapterTitle),
+			zap.Int("source_char_count", charCount),
+			zap.Bool("structured_summary_enabled", structuredEnabled),
+		)...,
+	)
+
+	if structuredLLM, ok := sc.llm.(StructuredSummaryProvider); ok {
+		systemPrompt, userPrompt := sc.promptManager.ChapterSummaryStructuredPrompt(req, chapter, index, targetChars)
+		resp, err := structuredLLM.GenerateStructuredChapterSummary(ctx, systemPrompt, userPrompt)
+		if err == nil {
+			finalMode = "structured"
+			summaryText := normalizeStructuredChapterSummary(chapter.Title, resp.Summary)
+			logn.Debug("script converter chapter summary done",
+				TaskLogFields(ctx, "long_form_chapter_summary_done",
+					zap.Int("chapter_index", index),
+					zap.String("chapter_title", chapterTitle),
+					zap.String("summary_mode", finalMode),
+					zap.Int("source_char_count", charCount),
+					zap.Int("summary_char_count", len([]rune(summaryText))),
+					zap.Int64("elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
+					zap.Bool("fallback_triggered", false),
+					zap.Any("usage", resp.Usage),
+				)...,
+			)
+			return summaryText, resp.Usage, nil
+		}
+		fallbackReason = err.Error()
+		logn.Warn("structured summary generation failed, fallback to text summary",
+			TaskLogFields(ctx, "long_form_summary_fallback",
+				zap.Int("chapter_index", index),
+				zap.String("chapter_title", chapterTitle),
+				zap.Int("source_char_count", charCount),
+				zap.String("fallback_from", "structured"),
+				zap.String("fallback_to", "text"),
+				zap.Int64("structured_elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
+				zap.Error(err),
+			)...,
+		)
+	}
+
+	systemPrompt, userPrompt := sc.promptManager.ChapterSummaryPrompt(req, chapter, index, targetChars)
+	resp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
+	if err != nil {
+		return "", nil, err
+	}
+
+	summaryText := normalizeChapterSummary(chapter.Title, resp.Content)
+	logn.Debug("script converter chapter summary done",
+		TaskLogFields(ctx, "long_form_chapter_summary_done",
+			zap.Int("chapter_index", index),
+			zap.String("chapter_title", chapterTitle),
+			zap.String("summary_mode", finalMode),
+			zap.Int("source_char_count", charCount),
+			zap.Int("summary_char_count", len([]rune(summaryText))),
+			zap.Int64("elapsed_ms", time.Since(chapterStartedAt).Milliseconds()),
+			zap.Bool("fallback_triggered", fallbackReason != ""),
+			zap.String("fallback_reason", fallbackReason),
+			zap.Any("usage", resp.Usage),
+		)...,
+	)
+	return summaryText, resp.Usage, nil
 }
 
 func (sc *ScriptConverter) generateYAMLScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error) {
@@ -507,6 +551,13 @@ func toBulletList(items []string) []string {
 		lines = append(lines, "- "+item)
 	}
 	return lines
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func summaryTargetChars(req ConvertRequest) int {

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"scene-script/config"
 	"scene-script/internal/model"
@@ -65,6 +67,53 @@ func (f *fakeYAMLLLMProvider) GenerateYAMLScript(ctx context.Context, systemProm
 		idx = len(f.yamlResponses) - 1
 	}
 	return &LLMResponse{Content: f.yamlResponses[idx]}, nil
+}
+
+type fakeConcurrentLLMProvider struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	calls     int
+	delay     time.Duration
+}
+
+func (f *fakeConcurrentLLMProvider) GenerateScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error) {
+	f.mu.Lock()
+	f.active++
+	if f.active > f.maxActive {
+		f.maxActive = f.active
+	}
+	f.calls++
+	callIndex := f.calls - 1
+	f.mu.Unlock()
+
+	time.Sleep(f.delay)
+
+	f.mu.Lock()
+	f.active--
+	f.mu.Unlock()
+
+	_ = callIndex
+	title := extractSummaryTitle(userPrompt)
+	if title == "" {
+		title = "未知章节"
+	}
+	resp := fmt.Sprintf("章节标题：%s\n关键人物：\n- 角色\n关键地点：\n- 地点\n关键事件：\n- 事件\n关键冲突：\n- 冲突\n伏笔线索：\n- 线索\n结尾状态：状态", title)
+	return &LLMResponse{Content: resp}, nil
+}
+
+func extractSummaryTitle(userPrompt string) string {
+	const marker = "1. 章节标题："
+	start := strings.Index(userPrompt, marker)
+	if start == -1 {
+		return ""
+	}
+	start += len(marker)
+	end := strings.Index(userPrompt[start:], "\n")
+	if end == -1 {
+		return strings.TrimSpace(userPrompt[start:])
+	}
+	return strings.TrimSpace(userPrompt[start : start+end])
 }
 
 func testConverter(t *testing.T, contents ...string) *ScriptConverter {
@@ -747,6 +796,52 @@ func TestCompressLongFormRequestFallsBackToTextSummaryWhenStructuredFails(t *tes
 	}
 	if !strings.Contains(compressed.Chapters[0].Text, "章节标题：第一章") {
 		t.Fatalf("expected fallback text summary to be normalized, got %s", compressed.Chapters[0].Text)
+	}
+}
+
+func TestCompressLongFormRequestProcessesChaptersConcurrently(t *testing.T) {
+	llm := &fakeConcurrentLLMProvider{
+		delay: 25 * time.Millisecond,
+	}
+	converter, err := NewScriptConverter(&config.LLMConf{
+		Prompt: config.LLMPromptConf{
+			System:            "system",
+			Template:          "小说内容:\n{chapters_text}",
+			MaxRepairAttempts: 1,
+		},
+	}, llm)
+	if err != nil {
+		t.Fatalf("new converter failed: %v", err)
+	}
+
+	req := ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: strings.Repeat("内容1。", 3000)},
+			{Title: "第二章", Text: strings.Repeat("内容2。", 3000)},
+			{Title: "第三章", Text: strings.Repeat("内容3。", 3000)},
+			{Title: "第四章", Text: strings.Repeat("内容4。", 3000)},
+			{Title: "第五章", Text: strings.Repeat("内容5。", 3000)},
+			{Title: "第六章", Text: strings.Repeat("内容6。", 3000)},
+			{Title: "第七章", Text: strings.Repeat("内容7。", 3000)},
+			{Title: "第八章", Text: strings.Repeat("内容8。", 3000)},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+
+	compressed, _, err := converter.compressLongFormRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("compressLongFormRequest failed: %v", err)
+	}
+	if llm.maxActive <= 1 {
+		t.Fatalf("expected concurrent summarization, maxActive=%d", llm.maxActive)
+	}
+	if !strings.Contains(compressed.Chapters[0].Text, "章节标题：第一章") {
+		t.Fatalf("expected first chapter summary to stay in place, got %s", compressed.Chapters[0].Text)
+	}
+	if !strings.Contains(compressed.Chapters[7].Text, "章节标题：第八章") {
+		t.Fatalf("expected last chapter summary to stay in place, got %s", compressed.Chapters[7].Text)
 	}
 }
 
