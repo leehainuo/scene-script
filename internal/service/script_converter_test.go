@@ -199,6 +199,36 @@ func TestBuildPromptIncludesCompactBudgetForTwelveChapters(t *testing.T) {
 	}
 }
 
+func TestChapterSummaryPromptUsesStructuredSections(t *testing.T) {
+	pm := NewPromptManager(&config.LLMPromptConf{})
+	req := ConvertRequest{
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+	systemPrompt, userPrompt := pm.ChapterSummaryPrompt(req, ChapterInput{
+		Title: "第一章",
+		Text:  "张三回到旧宅，发现遗失已久的钥匙。",
+	}, 0, 500)
+
+	if !strings.Contains(systemPrompt, "结构化摘要") {
+		t.Fatalf("expected structured summary system prompt, got %s", systemPrompt)
+	}
+	for _, want := range []string{
+		"关键人物：",
+		"关键地点：",
+		"关键事件：",
+		"关键冲突：",
+		"伏笔线索：",
+		"结尾状态：",
+		"`- 无`",
+	} {
+		if !strings.Contains(userPrompt, want) {
+			t.Fatalf("expected summary prompt to contain %q, got %s", want, userPrompt)
+		}
+	}
+}
+
 func TestConvertSanitizesAndNormalizesYAML(t *testing.T) {
 	raw := "```yaml\nversion: \"1.0\"\nmetadata:\n  title: \"测试小说\"\n  author: \"作者甲\"\n  genre: \"悬疑\"\n  tone: \"压抑\"\n  pacing: \"medium\"\n  source_chapters: 3\n  generated_at: \"2025-06-05T12:30:00Z\"\ndramatis_personae:\n  - name: \"张三\"\n    archetype: \"主角\"\n    motivation: \"调查真相\"\n    traits: [\"冷静\"]\n    relations: []\n    first_appearance: \"Chapter 1\"\nsettings:\n  - name: \"旧宅\"\n    description: \"年久失修的老房子\"\n    importance: \"high\"\nchapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"张三来到旧宅，发现“神秘钥匙”。\"\n    scenes:\n      - id: \"ch1.sc1\"\n        title: \"到达旧宅\"\n        goal: \"张三进入旧宅\"\n        location: \"旧宅\"\n        time: \"Night\"\n        pov: \"张三\"\n        mood: \"紧张\"\n        beats:\n          - id: \"ch1.sc1.b1\"\n            type: \"dialogue\"\n            summary: \"张三自语\"\n            dialogue:\n              speaker: \"张三\"\n              content: \"线索就在这里。\"\n        outcome: \"张三带着线索离开旧宅。\"\n  - id: \"ch2\"\n    title: \"第二章\"\n    summary: \"张三研究钥匙。\"\n    scenes: []\n  - id: \"ch3\"\n    title: \"第三章\"\n    summary: \"张三准备行动。\"\n    scenes: []\nconsistency_report:\n  roles_missing: []\n  settings_missing: []\n  dangling_refs: []\n```"
 	converter := testConverter(t, raw)
@@ -311,6 +341,45 @@ func TestSanitizeKnownSequenceScalarsConvertsCharacterFields(t *testing.T) {
 	} {
 		if !strings.Contains(sanitized, want) {
 			t.Fatalf("expected sanitized yaml to contain %q, got %s", want, sanitized)
+		}
+	}
+}
+
+func TestNormalizeChapterSummaryBuildsStructuredFallback(t *testing.T) {
+	normalized := normalizeChapterSummary("第一章", "张三回到旧宅，发现失踪多年的线索。")
+
+	for _, want := range []string{
+		"章节标题：第一章",
+		"关键人物：",
+		"关键地点：",
+		"关键事件：",
+		"- 张三回到旧宅，发现失踪多年的线索。",
+		"关键冲突：",
+		"伏笔线索：",
+		"结尾状态：无",
+	} {
+		if !strings.Contains(normalized, want) {
+			t.Fatalf("expected normalized summary to contain %q, got %s", want, normalized)
+		}
+	}
+}
+
+func TestNormalizeChapterSummaryPreservesStructuredSections(t *testing.T) {
+	raw := "章节标题：第一章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 张三进入旧宅\n关键冲突：\n- 张三怀疑李四隐瞒真相\n伏笔线索：\n- 旧钥匙再次出现\n结尾状态：张三决定继续调查。"
+
+	normalized := normalizeChapterSummary("第一章", raw)
+
+	for _, want := range []string{
+		"章节标题：第一章",
+		"关键人物：\n- 张三",
+		"关键地点：\n- 旧宅",
+		"关键事件：\n- 张三进入旧宅",
+		"关键冲突：\n- 张三怀疑李四隐瞒真相",
+		"伏笔线索：\n- 旧钥匙再次出现",
+		"结尾状态：张三决定继续调查。",
+	} {
+		if !strings.Contains(normalized, want) {
+			t.Fatalf("expected normalized structured summary to contain %q, got %s", want, normalized)
 		}
 	}
 }
@@ -438,9 +507,9 @@ func TestConvertWithLongFormSummarization(t *testing.T) {
 	validYAML := "version: \"1.0\"\nmetadata:\n  title: \"旧宅疑云\"\n  author: \"未知作者\"\n  genre: \"悬疑\"\n  tone: \"压抑\"\n  pacing: \"medium\"\n  source_chapters: 3\n  generated_at: \"2025-06-05T12:30:00Z\"\ndramatis_personae:\n  - name: \"张三\"\n    archetype: \"主角\"\n    motivation: \"查明真相\"\n    traits: [\"冷静\"]\n    relations: []\n    first_appearance: \"Chapter 1\"\nsettings:\n  - name: \"旧宅\"\n    description: \"废弃多年的老宅\"\n    importance: \"high\"\nchapters:\n  - id: \"ch1\"\n    title: \"第一章\"\n    summary: \"张三回到旧宅。\"\n    scenes: []\n  - id: \"ch2\"\n    title: \"第二章\"\n    summary: \"调查逐步深入。\"\n    scenes: []\n  - id: \"ch3\"\n    title: \"第三章\"\n    summary: \"危险开始逼近。\"\n    scenes: []\nconsistency_report:\n  roles_missing: []\n  settings_missing: []\n  dangling_refs: []\n"
 	llm := &fakeLLMProvider{
 		responses: []string{
-			"章节标题：第一章\n张三回到旧宅，发现失踪多年的线索。",
-			"章节标题：第二章\n张三调查旧宅，并怀疑李四隐瞒真相。",
-			"章节标题：第三章\n张三准备对质，危险逐步逼近。",
+			"章节标题：第一章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 张三回到旧宅，发现失踪多年的线索。\n关键冲突：\n- 张三不确定旧宅里的线索是否可信\n伏笔线索：\n- 失踪多年的线索重新出现\n结尾状态：张三决定继续追查。",
+			"章节标题：第二章\n关键人物：\n- 张三\n- 李四\n关键地点：\n- 旧宅\n关键事件：\n- 张三调查旧宅，并怀疑李四隐瞒真相。\n关键冲突：\n- 张三与李四互相试探\n伏笔线索：\n- 李四的异常反应\n结尾状态：怀疑进一步加深。",
+			"章节标题：第三章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 张三准备对质，危险逐步逼近。\n关键冲突：\n- 真相逼近前的心理拉扯\n伏笔线索：\n- 危险正在靠近\n结尾状态：对质一触即发。",
 			validYAML,
 		},
 	}

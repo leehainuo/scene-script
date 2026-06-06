@@ -85,7 +85,7 @@ func (pm *PromptManager) ConvertPrompt(req ConvertRequest) (systemPrompt, userPr
 
 func (pm *PromptManager) ChapterSummaryPrompt(req ConvertRequest, chapter ChapterInput, chapterIndex int, targetChars int) (systemPrompt, userPrompt string) {
 	systemPrompt = defaultSummarizeSystemPrompt
-	userPrompt = fmt.Sprintf(`请把下面这章长篇小说内容压缩成适合“小说转剧本”后续生成的章节摘要。
+	userPrompt = fmt.Sprintf(`请把下面这章长篇小说内容压缩成适合“小说转剧本”后续生成的轻结构摘要。
 
 目标：
 - 保留人物、地点、关键事件、冲突、转折、结尾状态
@@ -94,10 +94,18 @@ func (pm *PromptManager) ChapterSummaryPrompt(req ConvertRequest, chapter Chapte
 - 输出长度尽量控制在 %d 字以内，但不能丢失关键情节
 
 输出要求：
-- 只输出纯文本
-- 第一行必须是：章节标题：%s
-- 后续内容用短段落组织，不要编号，不要 YAML，不要 Markdown
-- 如果出现关键角色、地点或道具，请直接在摘要中明确写出
+- 只输出纯文本，不要 YAML，不要 JSON，不要 Markdown 代码块
+- 必须严格按以下区块顺序输出，不得新增或删除区块：
+  1. 章节标题：%s
+  2. 关键人物：
+  3. 关键地点：
+  4. 关键事件：
+  5. 关键冲突：
+  6. 伏笔线索：
+  7. 结尾状态：
+- “关键人物 / 关键地点 / 关键事件 / 关键冲突 / 伏笔线索” 统一使用短列表，每行一个 `+"`- `"+` 条目
+- 如果某项没有可靠信息，明确写 `+"`- 无`"+`，不要省略区块
+- 结尾状态使用单行短句，不要展开成长段
 - 不要虚构原文没有的信息
 
 改编设定：

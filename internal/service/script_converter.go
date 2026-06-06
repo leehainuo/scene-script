@@ -270,25 +270,118 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 func normalizeChapterSummary(title, raw string) string {
 	text := strings.TrimSpace(raw)
 	if text == "" {
-		return fmt.Sprintf("章节标题：%s\n该章节摘要为空，请回退到原文重新生成。", strings.TrimSpace(title))
+		return defaultStructuredChapterSummary(title, nil)
 	}
 
 	lines := strings.Split(text, "\n")
-	normalized := make([]string, 0, len(lines)+1)
-	header := fmt.Sprintf("章节标题：%s", strings.TrimSpace(title))
-	if len(lines) == 0 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "章节标题：") {
-		normalized = append(normalized, header)
+	structured := map[string][]string{
+		"关键人物：": {},
+		"关键地点：": {},
+		"关键事件：": {},
+		"关键冲突：": {},
+		"伏笔线索：": {},
 	}
+	endingState := ""
+	currentSection := ""
+	hasStructuredSections := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-		normalized = append(normalized, trimmed)
+
+		switch trimmed {
+		case "关键人物：", "关键地点：", "关键事件：", "关键冲突：", "伏笔线索：":
+			currentSection = trimmed
+			hasStructuredSections = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "结尾状态：") {
+			endingState = strings.TrimSpace(strings.TrimPrefix(trimmed, "结尾状态："))
+			hasStructuredSections = true
+			currentSection = ""
+			continue
+		}
+		if strings.HasPrefix(trimmed, "章节标题：") {
+			hasStructuredSections = true
+			currentSection = ""
+			continue
+		}
+
+		if currentSection != "" {
+			if strings.HasPrefix(trimmed, "- ") {
+				structured[currentSection] = append(structured[currentSection], trimmed)
+			} else {
+				structured[currentSection] = append(structured[currentSection], "- "+trimmed)
+			}
+			continue
+		}
+
+		structured["关键事件："] = append(structured["关键事件："], "- "+trimmed)
 	}
 
-	return strings.Join(normalized, "\n")
+	if !hasStructuredSections {
+		return defaultStructuredChapterSummary(title, []string{text})
+	}
+
+	if endingState == "" {
+		endingState = "无"
+	}
+
+	return defaultStructuredChapterSummary(title, buildStructuredSummaryLines(structured, endingState))
+}
+
+func buildStructuredSummaryLines(structured map[string][]string, endingState string) []string {
+	lines := make([]string, 0, 16)
+	for _, section := range []string{"关键人物：", "关键地点：", "关键事件：", "关键冲突：", "伏笔线索："} {
+		lines = append(lines, section)
+		items := structured[section]
+		if len(items) == 0 {
+			lines = append(lines, "- 无")
+			continue
+		}
+		lines = append(lines, items...)
+	}
+	lines = append(lines, "结尾状态："+endingState)
+	return lines
+}
+
+func defaultStructuredChapterSummary(title string, eventFallback []string) string {
+	lines := []string{
+		fmt.Sprintf("章节标题：%s", strings.TrimSpace(title)),
+		"关键人物：",
+		"- 无",
+		"关键地点：",
+		"- 无",
+		"关键事件：",
+	}
+	if len(eventFallback) == 0 {
+		lines = append(lines, "- 无")
+	} else {
+		for _, item := range eventFallback {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if strings.HasPrefix(item, "- ") {
+				lines = append(lines, item)
+			} else {
+				lines = append(lines, "- "+item)
+			}
+		}
+		if lines[len(lines)-1] == "关键事件：" {
+			lines = append(lines, "- 无")
+		}
+	}
+	lines = append(lines,
+		"关键冲突：",
+		"- 无",
+		"伏笔线索：",
+		"- 无",
+		"结尾状态：无",
+	)
+	return strings.Join(lines, "\n")
 }
 
 func summaryTargetChars(req ConvertRequest) int {
