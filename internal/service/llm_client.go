@@ -29,6 +29,10 @@ type LLMProvider interface {
 	GenerateScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error)
 }
 
+type YAMLGenerationProvider interface {
+	GenerateYAMLScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error)
+}
+
 type StructuredChapterSummary struct {
 	ChapterTitle string   `json:"chapter_title"`
 	Characters   []string `json:"characters"`
@@ -52,6 +56,7 @@ type StructuredSummaryProvider interface {
 type LLMClient struct {
 	config                 *config.LLMConf
 	model                  einoModel.BaseChatModel
+	yamlModel              einoModel.BaseChatModel
 	structuredSummaryModel einoModel.BaseChatModel
 }
 
@@ -80,6 +85,11 @@ func NewLLMClient(cfg *config.LLMConf) (*LLMClient, error) {
 		return nil, fmt.Errorf("create eino chat model failed: %w", err)
 	}
 
+	yamlModel, err := newOpenAIChatModel(cfg, timeout, nil, yamlGenerationProfile(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("create yaml generation model failed: %w", err)
+	}
+
 	structuredSummaryModel, err := newOpenAIChatModel(cfg, timeout, buildSummaryResponseFormat())
 	if err != nil {
 		return nil, fmt.Errorf("create structured summary model failed: %w", err)
@@ -88,17 +98,22 @@ func NewLLMClient(cfg *config.LLMConf) (*LLMClient, error) {
 	return &LLMClient{
 		config:                 cfg,
 		model:                  chatModel,
+		yamlModel:              yamlModel,
 		structuredSummaryModel: structuredSummaryModel,
 	}, nil
 }
 
 // GenerateScript - Generate YAML with Eino ChatModel over an OpenAI-compatible endpoint.
 func (c *LLMClient) GenerateScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error) {
-	return c.generateWithModel(ctx, c.model, systemPrompt, userPrompt)
+	return c.generateWithModel(ctx, c.model, "default_text", systemPrompt, userPrompt)
+}
+
+func (c *LLMClient) GenerateYAMLScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error) {
+	return c.generateWithModel(ctx, c.yamlModel, "yaml_generation", systemPrompt, userPrompt)
 }
 
 func (c *LLMClient) GenerateStructuredChapterSummary(ctx context.Context, systemPrompt, userPrompt string) (*StructuredChapterSummaryResponse, error) {
-	resp, err := c.generateWithModel(ctx, c.structuredSummaryModel, systemPrompt, userPrompt)
+	resp, err := c.generateWithModel(ctx, c.structuredSummaryModel, "structured_summary", systemPrompt, userPrompt)
 	if err != nil {
 		return nil, err
 	}
@@ -115,11 +130,12 @@ func (c *LLMClient) GenerateStructuredChapterSummary(ctx context.Context, system
 	}, nil
 }
 
-func (c *LLMClient) generateWithModel(ctx context.Context, chatModel einoModel.BaseChatModel, systemPrompt, userPrompt string) (*LLMResponse, error) {
+func (c *LLMClient) generateWithModel(ctx context.Context, chatModel einoModel.BaseChatModel, profile string, systemPrompt, userPrompt string) (*LLMResponse, error) {
 	startedAt := time.Now()
 	logn.Debug("llm generate start",
 		TaskLogFields(ctx, "llm_request",
 			zap.String("model", c.config.API.Model),
+			zap.String("profile", profile),
 			zap.Int("system_prompt_len", len(systemPrompt)),
 			zap.Int("user_prompt_len", len(userPrompt)),
 		)...,
@@ -145,6 +161,7 @@ func (c *LLMClient) generateWithModel(ctx context.Context, chatModel einoModel.B
 		logn.Error("llm generate failed",
 			TaskLogFields(ctx, "llm_failed",
 				zap.String("model", c.config.API.Model),
+				zap.String("profile", profile),
 				zap.Int64("llm_elapsed_ms", time.Since(startedAt).Milliseconds()),
 				zap.Error(err),
 			)...,
@@ -157,6 +174,7 @@ func (c *LLMClient) generateWithModel(ctx context.Context, chatModel einoModel.B
 		logn.Warn("llm returned empty content",
 			TaskLogFields(ctx, "llm_empty",
 				zap.String("model", c.config.API.Model),
+				zap.String("profile", profile),
 				zap.Int64("llm_elapsed_ms", time.Since(startedAt).Milliseconds()),
 			)...,
 		)
@@ -170,6 +188,7 @@ func (c *LLMClient) generateWithModel(ctx context.Context, chatModel einoModel.B
 	logn.Debug("llm generate done",
 		TaskLogFields(ctx, "llm_done",
 			zap.String("model", c.config.API.Model),
+			zap.String("profile", profile),
 			zap.Int64("llm_elapsed_ms", time.Since(startedAt).Milliseconds()),
 			zap.Int("content_len", len(content)),
 			zap.Any("usage", usage),
@@ -182,14 +201,54 @@ func (c *LLMClient) generateWithModel(ctx context.Context, chatModel einoModel.B
 	}, nil
 }
 
-func newOpenAIChatModel(cfg *config.LLMConf, timeout time.Duration, responseFormat *einoOpenAI.ChatCompletionResponseFormat) (einoModel.BaseChatModel, error) {
+type generationProfile struct {
+	seed        *int
+	stop        []string
+	extraFields map[string]any
+}
+
+func newOpenAIChatModel(cfg *config.LLMConf, timeout time.Duration, responseFormat *einoOpenAI.ChatCompletionResponseFormat, profiles ...generationProfile) (einoModel.BaseChatModel, error) {
+	profile := generationProfile{}
+	if len(profiles) > 0 {
+		profile = profiles[0]
+	}
 	return einoOpenAI.NewChatModel(context.Background(), &einoOpenAI.ChatModelConfig{
 		APIKey:         cfg.API.Key,
 		BaseURL:        strings.TrimRight(cfg.API.Endpoint, "/"),
 		Model:          cfg.API.Model,
 		Timeout:        timeout,
+		Stop:           profile.stop,
 		ResponseFormat: responseFormat,
+		Seed:           profile.seed,
+		ExtraFields:    profile.extraFields,
 	})
+}
+
+func yamlGenerationProfile(cfg *config.LLMConf) generationProfile {
+	profile := generationProfile{
+		seed: intPtr(7),
+	}
+	if isQwenCompatibleProvider(cfg) {
+		profile.extraFields = map[string]any{
+			"enable_thinking": false,
+		}
+	}
+	return profile
+}
+
+func isQwenCompatibleProvider(cfg *config.LLMConf) bool {
+	if cfg == nil {
+		return false
+	}
+	model := strings.ToLower(strings.TrimSpace(cfg.API.Model))
+	endpoint := strings.ToLower(strings.TrimSpace(cfg.API.Endpoint))
+	return strings.Contains(model, "qwen") ||
+		strings.Contains(endpoint, "dashscope") ||
+		strings.Contains(endpoint, "aliyuncs.com")
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func buildSummaryResponseFormat() *einoOpenAI.ChatCompletionResponseFormat {

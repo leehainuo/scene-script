@@ -49,6 +49,24 @@ func (f *fakeStructuredLLMProvider) GenerateStructuredChapterSummary(ctx context
 	return f.structuredResp, nil
 }
 
+type fakeYAMLLLMProvider struct {
+	fakeLLMProvider
+	yamlResponses []string
+	yamlCalls     int
+}
+
+func (f *fakeYAMLLLMProvider) GenerateYAMLScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error) {
+	f.yamlCalls++
+	if len(f.yamlResponses) == 0 {
+		return &LLMResponse{Content: ""}, nil
+	}
+	idx := f.yamlCalls - 1
+	if idx >= len(f.yamlResponses) {
+		idx = len(f.yamlResponses) - 1
+	}
+	return &LLMResponse{Content: f.yamlResponses[idx]}, nil
+}
+
 func testConverter(t *testing.T, contents ...string) *ScriptConverter {
 	t.Helper()
 
@@ -704,6 +722,39 @@ func TestCompressLongFormRequestFallsBackToTextSummaryWhenStructuredFails(t *tes
 	}
 	if !strings.Contains(compressed.Chapters[0].Text, "章节标题：第一章") {
 		t.Fatalf("expected fallback text summary to be normalized, got %s", compressed.Chapters[0].Text)
+	}
+}
+
+func TestGenerateYAMLScriptPrefersSpecializedProvider(t *testing.T) {
+	provider := &fakeYAMLLLMProvider{
+		yamlResponses: []string{"version: \"1.0\""},
+		fakeLLMProvider: fakeLLMProvider{
+			responses: []string{"plain-text"},
+		},
+	}
+	converter, err := NewScriptConverter(&config.LLMConf{
+		Prompt: config.LLMPromptConf{
+			System:            "system",
+			Template:          "小说内容:\n{chapters_text}",
+			MaxRepairAttempts: 1,
+		},
+	}, provider)
+	if err != nil {
+		t.Fatalf("new converter failed: %v", err)
+	}
+
+	resp, err := converter.generateYAMLScript(context.Background(), "system", "user")
+	if err != nil {
+		t.Fatalf("generateYAMLScript failed: %v", err)
+	}
+	if provider.yamlCalls != 1 {
+		t.Fatalf("expected yaml provider to be used once, got %d", provider.yamlCalls)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("expected default text generator to be skipped, got %d calls", provider.calls)
+	}
+	if resp.Content != "version: \"1.0\"" {
+		t.Fatalf("unexpected yaml response: %s", resp.Content)
 	}
 }
 

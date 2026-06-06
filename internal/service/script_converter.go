@@ -129,7 +129,7 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 
 	sc.reportProgress(report, ScriptTaskStageGenerating, "正在调用大模型生成剧本 YAML。")
 	systemPrompt, userPrompt := sc.promptManager.ConvertPrompt(workingReq)
-	llmResp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
+	llmResp, err := sc.generateYAMLScript(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		logn.Error("script converter initial generation failed", TaskLogFields(ctx, ScriptTaskStageGenerating, zap.Error(err))...)
 		return nil, err
@@ -174,7 +174,7 @@ func (sc *ScriptConverter) ConvertWithProgress(ctx context.Context, req ConvertR
 		)
 		sc.reportProgress(report, ScriptTaskStageRepairing, fmt.Sprintf("首轮结果未通过校验，正在执行第 %d 次修复。", attempt))
 		repairSystem, repairPrompt := sc.promptManager.RepairPrompt(workingReq, lastOutput, lastErr, attempt)
-		repairResp, repairErr := sc.llm.GenerateScript(ctx, repairSystem, repairPrompt)
+		repairResp, repairErr := sc.generateYAMLScript(ctx, repairSystem, repairPrompt)
 		if repairErr != nil {
 			logn.Error("script converter repair generation failed",
 				TaskLogFields(ctx, ScriptTaskStageRepairing,
@@ -350,6 +350,13 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 		)...,
 	)
 	return compressed, mergeTokenUsage(usages...), nil
+}
+
+func (sc *ScriptConverter) generateYAMLScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error) {
+	if yamlLLM, ok := sc.llm.(YAMLGenerationProvider); ok {
+		return yamlLLM.GenerateYAMLScript(ctx, systemPrompt, userPrompt)
+	}
+	return sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
 }
 
 func normalizeStructuredChapterSummary(title string, summary StructuredChapterSummary) string {
