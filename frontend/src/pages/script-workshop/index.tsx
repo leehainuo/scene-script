@@ -91,8 +91,7 @@ export default function ScriptWorkshopPage() {
   const [editableDocument, setEditableDocument] = useState<ScriptYamlDocument | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [activeChapterIndex, setActiveChapterIndex] = useState(0)
-  const [view, setView] = useState<ResultView>("overview")
-  const [wrapYaml, setWrapYaml] = useState(true)
+  const [view, setView] = useState<ResultView>("summary")
   const [generationStepIndex, setGenerationStepIndex] = useState(0)
   const [generationStepText, setGenerationStepText] = useState(GENERATION_STEPS[0])
   const [showGenerationOverlay, setShowGenerationOverlay] = useState(false)
@@ -416,6 +415,7 @@ export default function ScriptWorkshopPage() {
   function focusValidationTarget(path: string) {
     const characterMatch = path.match(/^dramatis_personae\[(\d+)\]/)
     if (characterMatch) {
+      setView("registry")
       setRegistryTab("characters")
       setSelectedCharacterIndex(Number(characterMatch[1]))
       return
@@ -423,6 +423,7 @@ export default function ScriptWorkshopPage() {
 
     const settingMatch = path.match(/^settings\[(\d+)\]/)
     if (settingMatch) {
+      setView("registry")
       setRegistryTab("settings")
       setSelectedSettingIndex(Number(settingMatch[1]))
       return
@@ -1028,8 +1029,6 @@ export default function ScriptWorkshopPage() {
                 setView={setView}
                 summary={summary}
                 consistency={consistency}
-                wrapYaml={wrapYaml}
-                setWrapYaml={setWrapYaml}
                 handleCopyYaml={handleCopyYaml}
                 handleDownloadYaml={handleDownloadYaml}
                 liveYaml={liveYaml}

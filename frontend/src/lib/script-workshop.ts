@@ -34,7 +34,7 @@ export type WorkshopResult = {
   metadata: ScriptTaskMeta
 }
 
-export type ResultView = "overview" | "yaml" | "structure"
+export type ResultView = "summary" | "registry" | "consistency" | "yaml" | "structure"
 export type SidebarView = "workspace" | "history" | "detail"
 export type ScriptTaskStatus = "pending" | "running" | "succeeded" | "failed"
 export type RegistryTab = "characters" | "settings"
