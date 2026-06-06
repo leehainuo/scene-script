@@ -15,10 +15,9 @@ node_modules/
 dist/
 *.log
 
-# Docker volumes
-scripts/docker/dev/volumes/mysql/*
-scripts/docker/dev/volumes/redis/*
-scripts/docker/dev/volumes/logs/*
+# Docker
+scripts/docker/.env
+scripts/docker/volumes/
 
 # Environment
 .env.local
