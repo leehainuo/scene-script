@@ -1,0 +1,30 @@
+# .dockerignore
+.git
+.gitignore
+.idea
+.vscode
+*.md
+LICENSE
+
+# Frontend
+frontend/node_modules
+frontend/dist
+frontend/.env.development
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db

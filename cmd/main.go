@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -17,23 +16,14 @@ import (
 )
 
 func main() {
-	// Get environment
-	env := flag.String("env", func() string {
-		if v := os.Getenv("NEXT_ENV"); v != "" {
-			return v
-		}
-		return "dev"
-	}(), "Environment: dev, prod")
-	flag.Parse()
-
 	// Load config
-	c, err := config.Init("config/config." + *env + ".yaml")
+	c, err := config.Init("config/config.yaml")
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
 
 	// Init logger
-	if err := logn.Init(c.Log); err != nil {
+	if err = logn.Init(c.Log); err != nil {
 		panic(fmt.Sprintf("Failed to init logger: %v", err))
 	}
 
