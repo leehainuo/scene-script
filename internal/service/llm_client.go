@@ -2,13 +2,16 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	einoOpenAI "github.com/cloudwego/eino-ext/components/model/openai"
 	einoModel "github.com/cloudwego/eino/components/model"
 	einoSchema "github.com/cloudwego/eino/schema"
-	einoOpenAI "github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/eino-contrib/jsonschema"
+	orderedmap "github.com/wk8/go-ordered-map/v2"
 	"go.uber.org/zap"
 
 	"scene-script/config"
@@ -26,10 +29,30 @@ type LLMProvider interface {
 	GenerateScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error)
 }
 
+type StructuredChapterSummary struct {
+	ChapterTitle string   `json:"chapter_title"`
+	Characters   []string `json:"characters"`
+	Locations    []string `json:"locations"`
+	PlotPoints   []string `json:"plot_points"`
+	Conflicts    []string `json:"conflicts"`
+	Foreshadow   []string `json:"foreshadowing"`
+	EndingState  string   `json:"ending_state"`
+}
+
+type StructuredChapterSummaryResponse struct {
+	Summary StructuredChapterSummary
+	Usage   *einoSchema.TokenUsage
+}
+
+type StructuredSummaryProvider interface {
+	GenerateStructuredChapterSummary(ctx context.Context, systemPrompt, userPrompt string) (*StructuredChapterSummaryResponse, error)
+}
+
 // LLMClient - Eino based OpenAI-compatible client for Qwen.
 type LLMClient struct {
-	config *config.LLMConf
-	model  einoModel.BaseChatModel
+	config                 *config.LLMConf
+	model                  einoModel.BaseChatModel
+	structuredSummaryModel einoModel.BaseChatModel
 }
 
 // NewLLMClient - Create a new Eino-backed client.
@@ -52,24 +75,47 @@ func NewLLMClient(cfg *config.LLMConf) (*LLMClient, error) {
 		timeout = time.Duration(cfg.API.TimeoutSeconds) * time.Second
 	}
 
-	chatModel, err := einoOpenAI.NewChatModel(context.Background(), &einoOpenAI.ChatModelConfig{
-		APIKey:  cfg.API.Key,
-		BaseURL: strings.TrimRight(cfg.API.Endpoint, "/"),
-		Model:   cfg.API.Model,
-		Timeout: timeout,
-	})
+	chatModel, err := newOpenAIChatModel(cfg, timeout, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create eino chat model failed: %w", err)
 	}
 
+	structuredSummaryModel, err := newOpenAIChatModel(cfg, timeout, buildSummaryResponseFormat())
+	if err != nil {
+		return nil, fmt.Errorf("create structured summary model failed: %w", err)
+	}
+
 	return &LLMClient{
-		config: cfg,
-		model:  chatModel,
+		config:                 cfg,
+		model:                  chatModel,
+		structuredSummaryModel: structuredSummaryModel,
 	}, nil
 }
 
 // GenerateScript - Generate YAML with Eino ChatModel over an OpenAI-compatible endpoint.
 func (c *LLMClient) GenerateScript(ctx context.Context, systemPrompt, userPrompt string) (*LLMResponse, error) {
+	return c.generateWithModel(ctx, c.model, systemPrompt, userPrompt)
+}
+
+func (c *LLMClient) GenerateStructuredChapterSummary(ctx context.Context, systemPrompt, userPrompt string) (*StructuredChapterSummaryResponse, error) {
+	resp, err := c.generateWithModel(ctx, c.structuredSummaryModel, systemPrompt, userPrompt)
+	if err != nil {
+		return nil, err
+	}
+
+	var summary StructuredChapterSummary
+	if err := json.Unmarshal([]byte(resp.Content), &summary); err != nil {
+		return nil, NewConvertError(ConvertErrorLLM, "structured summary unmarshal failed", err)
+	}
+	summary.normalize()
+
+	return &StructuredChapterSummaryResponse{
+		Summary: summary,
+		Usage:   resp.Usage,
+	}, nil
+}
+
+func (c *LLMClient) generateWithModel(ctx context.Context, chatModel einoModel.BaseChatModel, systemPrompt, userPrompt string) (*LLMResponse, error) {
 	startedAt := time.Now()
 	logn.Debug("llm generate start",
 		TaskLogFields(ctx, "llm_request",
@@ -94,7 +140,7 @@ func (c *LLMClient) GenerateScript(ctx context.Context, systemPrompt, userPrompt
 		opts = append(opts, einoModel.WithTemperature(c.config.API.Temperature))
 	}
 
-	resp, err := c.model.Generate(ctx, msgs, opts...)
+	resp, err := chatModel.Generate(ctx, msgs, opts...)
 	if err != nil {
 		logn.Error("llm generate failed",
 			TaskLogFields(ctx, "llm_failed",
@@ -134,4 +180,98 @@ func (c *LLMClient) GenerateScript(ctx context.Context, systemPrompt, userPrompt
 		Content: content,
 		Usage:   usage,
 	}, nil
+}
+
+func newOpenAIChatModel(cfg *config.LLMConf, timeout time.Duration, responseFormat *einoOpenAI.ChatCompletionResponseFormat) (einoModel.BaseChatModel, error) {
+	return einoOpenAI.NewChatModel(context.Background(), &einoOpenAI.ChatModelConfig{
+		APIKey:         cfg.API.Key,
+		BaseURL:        strings.TrimRight(cfg.API.Endpoint, "/"),
+		Model:          cfg.API.Model,
+		Timeout:        timeout,
+		ResponseFormat: responseFormat,
+	})
+}
+
+func buildSummaryResponseFormat() *einoOpenAI.ChatCompletionResponseFormat {
+	stringArray := func(description string) *jsonschema.Schema {
+		return &jsonschema.Schema{
+			Type:        string(einoSchema.Array),
+			Description: description,
+			Items: &jsonschema.Schema{
+				Type: string(einoSchema.String),
+			},
+		}
+	}
+
+	return &einoOpenAI.ChatCompletionResponseFormat{
+		Type: einoOpenAI.ChatCompletionResponseFormatTypeJSONSchema,
+		JSONSchema: &einoOpenAI.ChatCompletionResponseFormatJSONSchema{
+			Name:        "chapter_summary",
+			Description: "structured chapter summary for long-form novel to screenplay conversion",
+			Strict:      false,
+			JSONSchema: &jsonschema.Schema{
+				Type: string(einoSchema.Object),
+				Properties: orderedmap.New[string, *jsonschema.Schema](
+					orderedmap.WithInitialData(
+						orderedmap.Pair[string, *jsonschema.Schema]{
+							Key: "chapter_title",
+							Value: &jsonschema.Schema{
+								Type:        string(einoSchema.String),
+								Description: "chapter title",
+							},
+						},
+						orderedmap.Pair[string, *jsonschema.Schema]{
+							Key:   "characters",
+							Value: stringArray("key characters"),
+						},
+						orderedmap.Pair[string, *jsonschema.Schema]{
+							Key:   "locations",
+							Value: stringArray("key locations"),
+						},
+						orderedmap.Pair[string, *jsonschema.Schema]{
+							Key:   "plot_points",
+							Value: stringArray("key events and plot points"),
+						},
+						orderedmap.Pair[string, *jsonschema.Schema]{
+							Key:   "conflicts",
+							Value: stringArray("key conflicts"),
+						},
+						orderedmap.Pair[string, *jsonschema.Schema]{
+							Key:   "foreshadowing",
+							Value: stringArray("foreshadowing clues"),
+						},
+						orderedmap.Pair[string, *jsonschema.Schema]{
+							Key: "ending_state",
+							Value: &jsonschema.Schema{
+								Type:        string(einoSchema.String),
+								Description: "chapter ending state",
+							},
+						},
+					),
+				),
+			},
+		},
+	}
+}
+
+func (s *StructuredChapterSummary) normalize() {
+	s.ChapterTitle = strings.TrimSpace(s.ChapterTitle)
+	s.EndingState = strings.TrimSpace(s.EndingState)
+	s.Characters = normalizeStringList(s.Characters)
+	s.Locations = normalizeStringList(s.Locations)
+	s.PlotPoints = normalizeStringList(s.PlotPoints)
+	s.Conflicts = normalizeStringList(s.Conflicts)
+	s.Foreshadow = normalizeStringList(s.Foreshadow)
+}
+
+func normalizeStringList(items []string) []string {
+	normalized := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		normalized = append(normalized, item)
+	}
+	return normalized
 }

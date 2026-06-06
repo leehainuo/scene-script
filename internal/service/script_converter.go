@@ -251,6 +251,26 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 	usages := make([]*einoSchema.TokenUsage, 0, len(req.Chapters))
 	targetChars := summaryTargetChars(req)
 	for index, chapter := range req.Chapters {
+		if structuredLLM, ok := sc.llm.(StructuredSummaryProvider); ok {
+			systemPrompt, userPrompt := sc.promptManager.ChapterSummaryStructuredPrompt(req, chapter, index, targetChars)
+			resp, err := structuredLLM.GenerateStructuredChapterSummary(ctx, systemPrompt, userPrompt)
+			if err == nil {
+				compressed.Chapters[index] = ChapterInput{
+					Title: chapter.Title,
+					Text:  normalizeStructuredChapterSummary(chapter.Title, resp.Summary),
+				}
+				usages = append(usages, resp.Usage)
+				continue
+			}
+			logn.Warn("structured summary generation failed, fallback to text summary",
+				TaskLogFields(ctx, "long_form_summary_fallback",
+					zap.Int("chapter_index", index),
+					zap.String("chapter_title", strings.TrimSpace(chapter.Title)),
+					zap.Error(err),
+				)...,
+			)
+		}
+
 		systemPrompt, userPrompt := sc.promptManager.ChapterSummaryPrompt(req, chapter, index, targetChars)
 		resp, err := sc.llm.GenerateScript(ctx, systemPrompt, userPrompt)
 		if err != nil {
@@ -265,6 +285,24 @@ func (sc *ScriptConverter) compressLongFormRequest(ctx context.Context, req Conv
 	}
 
 	return compressed, mergeTokenUsage(usages...), nil
+}
+
+func normalizeStructuredChapterSummary(title string, summary StructuredChapterSummary) string {
+	structured := map[string][]string{
+		"关键人物：": toBulletList(summary.Characters),
+		"关键地点：": toBulletList(summary.Locations),
+		"关键事件：": toBulletList(summary.PlotPoints),
+		"关键冲突：": toBulletList(summary.Conflicts),
+		"伏笔线索：": toBulletList(summary.Foreshadow),
+	}
+	if strings.TrimSpace(summary.ChapterTitle) != "" {
+		title = summary.ChapterTitle
+	}
+	endingState := strings.TrimSpace(summary.EndingState)
+	if endingState == "" {
+		endingState = "无"
+	}
+	return defaultStructuredChapterSummary(title, buildStructuredSummaryLines(structured, endingState))
 }
 
 func normalizeChapterSummary(title, raw string) string {
@@ -382,6 +420,21 @@ func defaultStructuredChapterSummary(title string, eventFallback []string) strin
 		"结尾状态：无",
 	)
 	return strings.Join(lines, "\n")
+}
+
+func toBulletList(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		lines = append(lines, "- "+item)
+	}
+	return lines
 }
 
 func summaryTargetChars(req ConvertRequest) int {

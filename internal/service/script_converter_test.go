@@ -31,6 +31,24 @@ func (f *fakeLLMProvider) GenerateScript(ctx context.Context, systemPrompt, user
 	return &LLMResponse{Content: f.responses[idx]}, nil
 }
 
+type fakeStructuredLLMProvider struct {
+	fakeLLMProvider
+	structuredResp  *StructuredChapterSummaryResponse
+	structuredErr   error
+	structuredCalls int
+}
+
+func (f *fakeStructuredLLMProvider) GenerateStructuredChapterSummary(ctx context.Context, systemPrompt, userPrompt string) (*StructuredChapterSummaryResponse, error) {
+	if f.structuredErr != nil {
+		return nil, f.structuredErr
+	}
+	f.structuredCalls++
+	if f.structuredResp == nil {
+		return nil, fmt.Errorf("no structured response configured")
+	}
+	return f.structuredResp, nil
+}
+
 func testConverter(t *testing.T, contents ...string) *ScriptConverter {
 	t.Helper()
 
@@ -384,6 +402,32 @@ func TestNormalizeChapterSummaryPreservesStructuredSections(t *testing.T) {
 	}
 }
 
+func TestNormalizeStructuredChapterSummaryBuildsSectionedText(t *testing.T) {
+	normalized := normalizeStructuredChapterSummary("第一章", StructuredChapterSummary{
+		ChapterTitle: "第一章：归来",
+		Characters:   []string{"张三"},
+		Locations:    []string{"旧宅"},
+		PlotPoints:   []string{"张三回到旧宅", "发现失踪多年的线索"},
+		Conflicts:    []string{"张三怀疑线索真假"},
+		Foreshadow:   []string{"旧钥匙再次出现"},
+		EndingState:  "张三决定继续追查。",
+	})
+
+	for _, want := range []string{
+		"章节标题：第一章：归来",
+		"关键人物：\n- 张三",
+		"关键地点：\n- 旧宅",
+		"关键事件：\n- 张三回到旧宅\n- 发现失踪多年的线索",
+		"关键冲突：\n- 张三怀疑线索真假",
+		"伏笔线索：\n- 旧钥匙再次出现",
+		"结尾状态：张三决定继续追查。",
+	} {
+		if !strings.Contains(normalized, want) {
+			t.Fatalf("expected normalized structured summary to contain %q, got %s", want, normalized)
+		}
+	}
+}
+
 func TestValidateRequestRejectsTooManyChapters(t *testing.T) {
 	converter := testConverter(t, "")
 	req := ConvertRequest{
@@ -549,6 +593,117 @@ func TestConvertWithLongFormSummarization(t *testing.T) {
 	}
 	if result.Summary.Chapters != 3 {
 		t.Fatalf("unexpected summary: %#v", result.Summary)
+	}
+}
+
+func TestCompressLongFormRequestPrefersStructuredSummaryWhenAvailable(t *testing.T) {
+	llm := &fakeStructuredLLMProvider{
+		structuredResp: &StructuredChapterSummaryResponse{
+			Summary: StructuredChapterSummary{
+				ChapterTitle: "第一章：归来",
+				Characters:   []string{"张三"},
+				Locations:    []string{"旧宅"},
+				PlotPoints:   []string{"张三回到旧宅"},
+				Conflicts:    []string{"张三怀疑旧宅中的线索"},
+				Foreshadow:   []string{"失踪多年的钥匙再次出现"},
+				EndingState:  "张三决定继续调查。",
+			},
+		},
+	}
+	converter, err := NewScriptConverter(&config.LLMConf{
+		Prompt: config.LLMPromptConf{
+			System:            "system",
+			Template:          "小说内容:\n{chapters_text}",
+			MaxRepairAttempts: 1,
+		},
+	}, llm)
+	if err != nil {
+		t.Fatalf("new converter failed: %v", err)
+	}
+
+	req := ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: strings.Repeat("旧宅线索。", 3000)},
+			{Title: "第二章", Text: strings.Repeat("第二章调查。", 3000)},
+			{Title: "第三章", Text: strings.Repeat("第三章对质。", 3000)},
+			{Title: "第四章", Text: strings.Repeat("第四章推进。", 3000)},
+			{Title: "第五章", Text: strings.Repeat("第五章推进。", 3000)},
+			{Title: "第六章", Text: strings.Repeat("第六章推进。", 3000)},
+			{Title: "第七章", Text: strings.Repeat("第七章推进。", 3000)},
+			{Title: "第八章", Text: strings.Repeat("第八章推进。", 3000)},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+
+	compressed, _, err := converter.compressLongFormRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("compressLongFormRequest failed: %v", err)
+	}
+	if llm.structuredCalls == 0 {
+		t.Fatalf("expected structured summary generation to be used")
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected text summary fallback to be skipped, got %d calls", llm.calls)
+	}
+	if !strings.Contains(compressed.Chapters[0].Text, "章节标题：第一章：归来") {
+		t.Fatalf("expected structured summary to be normalized, got %s", compressed.Chapters[0].Text)
+	}
+}
+
+func TestCompressLongFormRequestFallsBackToTextSummaryWhenStructuredFails(t *testing.T) {
+	llm := &fakeStructuredLLMProvider{
+		structuredErr: fmt.Errorf("provider does not support response_format"),
+		fakeLLMProvider: fakeLLMProvider{
+			responses: []string{
+				"章节标题：第一章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 张三回到旧宅\n关键冲突：\n- 张三心存怀疑\n伏笔线索：\n- 旧钥匙出现\n结尾状态：张三决定继续调查。",
+				"章节标题：第二章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 张三继续调查\n关键冲突：\n- 李四开始回避\n伏笔线索：\n- 李四的异常反应\n结尾状态：怀疑加深。",
+				"章节标题：第三章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 张三准备对质\n关键冲突：\n- 真相逼近\n伏笔线索：\n- 危险靠近\n结尾状态：冲突升级。",
+				"章节标题：第四章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 第四章推进\n关键冲突：\n- 无\n伏笔线索：\n- 无\n结尾状态：无",
+				"章节标题：第五章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 第五章推进\n关键冲突：\n- 无\n伏笔线索：\n- 无\n结尾状态：无",
+				"章节标题：第六章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 第六章推进\n关键冲突：\n- 无\n伏笔线索：\n- 无\n结尾状态：无",
+				"章节标题：第七章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 第七章推进\n关键冲突：\n- 无\n伏笔线索：\n- 无\n结尾状态：无",
+				"章节标题：第八章\n关键人物：\n- 张三\n关键地点：\n- 旧宅\n关键事件：\n- 第八章推进\n关键冲突：\n- 无\n伏笔线索：\n- 无\n结尾状态：无",
+			},
+		},
+	}
+	converter, err := NewScriptConverter(&config.LLMConf{
+		Prompt: config.LLMPromptConf{
+			System:            "system",
+			Template:          "小说内容:\n{chapters_text}",
+			MaxRepairAttempts: 1,
+		},
+	}, llm)
+	if err != nil {
+		t.Fatalf("new converter failed: %v", err)
+	}
+
+	req := ConvertRequest{
+		Chapters: []ChapterInput{
+			{Title: "第一章", Text: strings.Repeat("旧宅线索。", 3000)},
+			{Title: "第二章", Text: strings.Repeat("第二章调查。", 3000)},
+			{Title: "第三章", Text: strings.Repeat("第三章对质。", 3000)},
+			{Title: "第四章", Text: strings.Repeat("第四章推进。", 3000)},
+			{Title: "第五章", Text: strings.Repeat("第五章推进。", 3000)},
+			{Title: "第六章", Text: strings.Repeat("第六章推进。", 3000)},
+			{Title: "第七章", Text: strings.Repeat("第七章推进。", 3000)},
+			{Title: "第八章", Text: strings.Repeat("第八章推进。", 3000)},
+		},
+		Genre:  "悬疑",
+		Tone:   "压抑",
+		Pacing: "medium",
+	}
+
+	compressed, _, err := converter.compressLongFormRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("compressLongFormRequest failed: %v", err)
+	}
+	if llm.calls == 0 {
+		t.Fatalf("expected text summary fallback to be used")
+	}
+	if !strings.Contains(compressed.Chapters[0].Text, "章节标题：第一章") {
+		t.Fatalf("expected fallback text summary to be normalized, got %s", compressed.Chapters[0].Text)
 	}
 }
 
