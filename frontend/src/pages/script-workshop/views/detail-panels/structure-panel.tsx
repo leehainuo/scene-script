@@ -1,6 +1,6 @@
 import { GripVertical, Wand2 } from "lucide-react"
-import { TreeNode } from "@/components/script-workshop/tree-node"
-import { ValidationMessage } from "@/components/script-workshop/validation-message"
+import { TreeNode } from "@/pages/script-workshop/components/tree-node"
+import { ValidationMessage } from "@/pages/script-workshop/components/validation-message"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"

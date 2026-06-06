@@ -19,11 +19,19 @@ const (
 )
 
 func validateConvertScriptReq(req *types.ConvertScriptReq) error {
+	if req == nil {
+		return errorn.New(http.StatusBadRequest, "request is required")
+	}
 	if len(req.Chapters) < minConvertChapters || len(req.Chapters) > maxConvertChapters {
 		return errorn.New(http.StatusBadRequest, "chapter count must be between 3 and 12")
 	}
 	if req.Genre == "" || req.Tone == "" || req.Pacing == "" {
 		return errorn.New(http.StatusBadRequest, "genre, tone, and pacing are required")
+	}
+	switch req.Pacing {
+	case "fast", "medium", "slow":
+	default:
+		return errorn.New(http.StatusBadRequest, "pacing must be one of: fast, medium, slow")
 	}
 	for _, chapter := range req.Chapters {
 		if strings.TrimSpace(chapter.Title) == "" || strings.TrimSpace(chapter.Text) == "" {

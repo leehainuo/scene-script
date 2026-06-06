@@ -33,6 +33,9 @@ func NewConvertScriptLogic(c context.Context, svc *svc.ServiceContext) *ConvertS
 
 // Convert - Validate, create a pending task, then hand off execution to the async runner.
 func (l *ConvertScriptLogic) Convert(userID int64, req *types.ConvertScriptReq) (*types.ConvertScriptResp, error) {
+	if userID <= 0 {
+		return nil, errorn.New(http.StatusBadRequest, "invalid user id")
+	}
 	if err := validateConvertScriptReq(req); err != nil {
 		return nil, err
 	}

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
-
 	"scene-script/internal/model"
 	"scene-script/internal/service"
 	"scene-script/internal/svc"
@@ -47,15 +46,9 @@ func (l *SaveScriptResultLogic) Save(userID int64, req *types.SaveScriptResultRe
 		return nil, errorn.New(http.StatusBadRequest, "yaml is required")
 	}
 
-	task, err := l.svc.ScriptTaskModel.FindByTaskID(l.c, req.ID)
+	task, err := findOwnedScriptTask(l.c, l.svc, userID, req.ID)
 	if err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			return nil, errorn.New(http.StatusNotFound, "script task not found")
-		}
 		return nil, err
-	}
-	if task.UserID != userID {
-		return nil, errorn.New(http.StatusNotFound, "script task not found")
 	}
 	if task.Status != "succeeded" {
 		return nil, errorn.New(http.StatusBadRequest, "only succeeded script can be edited")
@@ -70,6 +63,7 @@ func (l *SaveScriptResultLogic) Save(userID int64, req *types.SaveScriptResultRe
 	}
 
 	normalized, err := l.svc.ScriptConverter.NormalizeEditedYAML(
+		l.c,
 		req.YAML,
 		task.Genre,
 		task.Tone,

@@ -1,10 +1,10 @@
 import type { Dispatch, RefObject, SetStateAction } from "react"
-import { ChevronDown, Check, FileUp, LoaderCircle, RefreshCw, Trash2, Wand2 } from "lucide-react"
+import { ChevronDown, Check, FileUp, LoaderCircle, RefreshCw, Wand2 } from "lucide-react"
 import { SectionPanel } from "@/components/shared/section-panel"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { ChapterEditorPanel } from "@/pages/script-workshop/components/chapter-editor-panel"
+import { ChapterSummaryGrid } from "@/pages/script-workshop/components/chapter-summary-grid"
 import {
-  formatTextCount,
   GENRE_OPTIONS,
   MAX_SOURCE_CHAPTERS,
   PACING_OPTIONS,
@@ -231,55 +231,15 @@ export function WorkspaceView({
                   </p>
                 </div>
                 {workspaceInputMode === "chapter" ? (
-                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                    {chapterSummaries.map((chapter) => (
-                      <button
-                        key={`${chapter.title}-${chapter.index}`}
-                        type="button"
-                        onClick={() => setActiveChapterIndex(chapter.index)}
-                        className={cn(
-                          "rounded-[22px] border px-4 py-3 text-left transition-colors",
-                          activeChapterIndex === chapter.index
-                            ? "border-slate-900 bg-slate-900 text-white shadow-[0_18px_36px_rgba(15,23,42,0.12)]"
-                            : "border-black/8 bg-white text-slate-600 hover:bg-slate-50"
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-inherit/70">
-                            第 {chapter.index + 1} 章
-                          </p>
-                          <span
-                            className={cn(
-                              "rounded-full px-2.5 py-1 text-[11px]",
-                              activeChapterIndex === chapter.index
-                                ? "bg-white/14 text-white"
-                                : chapter.completionState === "ready"
-                                  ? "bg-emerald-50 text-emerald-700"
-                                  : chapter.completionState === "partial"
-                                    ? "bg-amber-50 text-amber-700"
-                                    : "bg-slate-100 text-slate-500"
-                            )}
-                          >
-                            {chapter.statusLabel}
-                          </span>
-                        </div>
-                        <p className="mt-3 line-clamp-1 text-sm font-medium">{chapter.title}</p>
-                        <p className="mt-1 text-xs text-inherit/70">{chapter.detailLabel}</p>
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={addChapter}
-                      disabled={!canAddChapter}
-                      className="rounded-[22px] border border-dashed border-black/10 bg-white px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">扩展输入</p>
-                      <p className="mt-3 font-medium text-slate-700">+ 新增章节</p>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {canAddChapter ? "继续补充更多章节内容" : `已达到 ${MAX_SOURCE_CHAPTERS} 章上限`}
-                      </p>
-                    </button>
-                  </div>
+                  <ChapterSummaryGrid
+                    summaries={chapterSummaries}
+                    activeIndex={activeChapterIndex}
+                    onSelect={setActiveChapterIndex}
+                    onAdd={addChapter}
+                    addDisabled={!canAddChapter}
+                    addEyebrow="扩展输入"
+                    addHint="继续补充更多章节内容"
+                  />
                 ) : (
                   <div className="space-y-4">
                     <div className="rounded-[24px] border border-black/6 bg-white p-4 sm:p-5">
@@ -327,123 +287,44 @@ export function WorkspaceView({
                     </div>
 
                     {importedChapters.length > 0 ? (
-                      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                        {importedChapterSummaries.map((chapter) => (
-                          <button
-                            key={`${chapter.title}-${chapter.index}`}
-                            type="button"
-                            onClick={() => setActiveImportedChapterIndex(chapter.index)}
-                            className={cn(
-                              "rounded-[22px] border px-4 py-3 text-left transition-colors",
-                              activeImportedChapterIndex === chapter.index
-                                ? "border-slate-900 bg-slate-900 text-white shadow-[0_18px_36px_rgba(15,23,42,0.12)]"
-                                : "border-black/8 bg-white text-slate-600 hover:bg-slate-50"
-                            )}
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-xs uppercase tracking-[0.18em] text-inherit/70">
-                                第 {chapter.index + 1} 章
-                              </p>
-                              <span
-                                className={cn(
-                                  "rounded-full px-2.5 py-1 text-[11px]",
-                                  activeImportedChapterIndex === chapter.index
-                                    ? "bg-white/14 text-white"
-                                    : chapter.completionState === "ready"
-                                      ? "bg-emerald-50 text-emerald-700"
-                                      : chapter.completionState === "partial"
-                                        ? "bg-amber-50 text-amber-700"
-                                        : "bg-slate-100 text-slate-500"
-                                )}
-                              >
-                                {chapter.statusLabel}
-                              </span>
-                            </div>
-                            <p className="mt-3 line-clamp-1 text-sm font-medium">{chapter.title}</p>
-                            <p className="mt-1 text-xs text-inherit/70">{chapter.detailLabel}</p>
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={handleAddImportedChapter}
-                          disabled={importedChapters.length >= MAX_SOURCE_CHAPTERS}
-                          className="rounded-[22px] border border-dashed border-black/10 bg-white px-4 py-3 text-left text-sm text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">拆章扩展</p>
-                          <p className="mt-3 font-medium text-slate-700">+ 新增章节</p>
-                          <p className="mt-1 text-xs text-slate-400">
-                            {importedChapters.length >= MAX_SOURCE_CHAPTERS
-                              ? `已达到 ${MAX_SOURCE_CHAPTERS} 章上限`
-                              : "继续补充或拆分更多章节"}
-                          </p>
-                        </button>
-                      </div>
+                      <ChapterSummaryGrid
+                        summaries={importedChapterSummaries}
+                        activeIndex={activeImportedChapterIndex}
+                        onSelect={setActiveImportedChapterIndex}
+                        onAdd={handleAddImportedChapter}
+                        addDisabled={importedChapters.length >= MAX_SOURCE_CHAPTERS}
+                        addEyebrow="拆章扩展"
+                        addHint="继续补充或拆分更多章节"
+                      />
                     ) : null}
 
                     <div className="rounded-[24px] border border-black/6 bg-white p-4 sm:p-5">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">拆章确认</p>
-                          <p className="mt-1 text-sm font-medium text-slate-900">
-                            {activeImportedChapterSummary?.title ?? "等待自动拆章"}
-                          </p>
-                        </div>
-                        {activeImportedChapter ? (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveImportedChapter(activeImportedChapterIndex)}
-                            className="text-slate-300 transition-colors hover:text-rose-500"
-                            aria-label={`删除章节 ${activeImportedChapterIndex + 1}`}
-                          >
-                            <Trash2 className="h-5 w-5" />
-                          </button>
-                        ) : null}
-                      </div>
-
-                      <div className="mt-4 space-y-4">
-                        {importedChapters.length === 0 ? (
-                          <div className="flex min-h-[260px] items-center justify-center rounded-[24px] border border-dashed border-black/8 px-4 py-12 text-center text-sm leading-7 text-slate-400">
-                            先在左侧粘贴全文并点击“自动拆章”，这里会显示可继续校对的章节结果。
-                          </div>
-                        ) : (
-                          <>
-                            <Input
-                              value={activeImportedChapter?.title ?? ""}
-                              onChange={(event) =>
-                                handleImportedChapterChange(
-                                  activeImportedChapterIndex,
-                                  "title",
-                                  event.target.value
-                                )
-                              }
-                              placeholder={`第 ${activeImportedChapterIndex + 1} 章`}
-                              className="h-12 rounded-2xl border-black/8 bg-white text-base text-slate-900 placeholder:text-slate-400"
-                            />
-                            <textarea
-                              value={activeImportedChapter?.text ?? ""}
-                              onChange={(event) =>
-                                handleImportedChapterChange(
-                                  activeImportedChapterIndex,
-                                  "text",
-                                  event.target.value
-                                )
-                              }
-                              placeholder="这一章的正文内容"
-                              className="min-h-[360px] w-full rounded-[24px] border border-black/8 bg-white px-5 py-5 text-[15px] leading-8 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
-                            />
-                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-[20px] border border-black/6 bg-white/70 px-4 py-3 text-xs text-slate-500">
-                              <span>
-                                当前章节状态：{activeImportedChapterSummary?.statusLabel ?? "未开始"}
-                              </span>
-                              <span>
-                                {activeImportedChapterSummary
-                                  ? formatTextCount(activeImportedChapterSummary.textCount)
-                                  : "0 字"}
-                              </span>
-                            </div>
-                          </>
-                        )}
-                      </div>
+                      <ChapterEditorPanel
+                        eyebrow="拆章确认"
+                        heading={activeImportedChapterSummary?.title ?? "等待自动拆章"}
+                        title={activeImportedChapter?.title ?? ""}
+                        text={activeImportedChapter?.text ?? ""}
+                        titlePlaceholder={`第 ${activeImportedChapterIndex + 1} 章`}
+                        textPlaceholder="这一章的正文内容"
+                        statusLabel={activeImportedChapterSummary?.statusLabel ?? "未开始"}
+                        textCount={activeImportedChapterSummary?.textCount ?? 0}
+                        onTitleChange={(value) =>
+                          handleImportedChapterChange(activeImportedChapterIndex, "title", value)
+                        }
+                        onTextChange={(value) =>
+                          handleImportedChapterChange(activeImportedChapterIndex, "text", value)
+                        }
+                        onRemove={
+                          activeImportedChapter
+                            ? () => handleRemoveImportedChapter(activeImportedChapterIndex)
+                            : undefined
+                        }
+                        emptyState={
+                          importedChapters.length === 0
+                            ? "先在左侧粘贴全文并点击“自动拆章”，这里会显示可继续校对的章节结果。"
+                            : undefined
+                        }
+                      />
 
                       <div className="mt-5 flex flex-col gap-3 border-t border-black/6 pt-4">
                         <Button
@@ -464,25 +345,19 @@ export function WorkspaceView({
 
               {workspaceInputMode === "chapter" ? (
                 <div className="mt-5 space-y-4">
-                  <Input
-                    value={activeChapter?.title ?? ""}
-                    onChange={(event) => updateChapter(activeChapterIndex, "title", event.target.value)}
-                    placeholder="给这一章起一个更容易理解的标题"
-                    className="h-12 rounded-2xl border-black/8 bg-white text-base text-slate-900 placeholder:text-slate-400"
+                  <ChapterEditorPanel
+                    eyebrow="当前输入"
+                    heading={`第 ${activeChapterIndex + 1} 章`}
+                    title={activeChapter?.title ?? ""}
+                    text={activeChapter?.text ?? ""}
+                    titlePlaceholder="给这一章起一个更容易理解的标题"
+                    textPlaceholder="把这一章的小说正文粘贴到这里，尽量保持段落清晰。AI 会基于这些内容生成章节、场景和节拍结构。"
+                    statusLabel={activeChapterSummary?.statusLabel ?? "未开始"}
+                    textCount={activeChapterSummary?.textCount ?? 0}
+                    onTitleChange={(value) => updateChapter(activeChapterIndex, "title", value)}
+                    onTextChange={(value) => updateChapter(activeChapterIndex, "text", value)}
+                    minHeightClassName="min-h-[420px]"
                   />
-
-                  <textarea
-                    value={activeChapter?.text ?? ""}
-                    onChange={(event) => updateChapter(activeChapterIndex, "text", event.target.value)}
-                    placeholder="把这一章的小说正文粘贴到这里，尽量保持段落清晰。AI 会基于这些内容生成章节、场景和节拍结构。"
-                    className="min-h-[420px] w-full rounded-[26px] border border-black/8 bg-white px-5 py-5 text-[15px] leading-8 text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-200 focus:ring-3 focus:ring-sky-100"
-                  />
-                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-[20px] border border-black/6 bg-white/70 px-4 py-3 text-xs text-slate-500">
-                    <span>当前章节状态：{activeChapterSummary?.statusLabel ?? "未开始"}</span>
-                    <span>
-                      {activeChapterSummary ? formatTextCount(activeChapterSummary.textCount) : "0 字"}
-                    </span>
-                  </div>
                 </div>
               ) : null}
             </div>

@@ -1,6 +1,6 @@
 import type { RefObject } from "react"
 import { Check, ChevronDown, ListFilter, LoaderCircle, RefreshCw, Trash2 } from "lucide-react"
-import { HistorySkeletonCard } from "@/components/script-workshop/history-skeleton-card"
+import { HistorySkeletonCard } from "@/pages/script-workshop/components/history-skeleton-card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { formatScriptStyleSummary } from "@/lib/script-display"

@@ -1,4 +1,4 @@
-import { ScriptDetailHeader } from "@/components/script-workshop/detail-header"
+import { ScriptDetailHeader } from "@/pages/script-workshop/components/detail-header"
 import { EmptyDetailState } from "./detail-panels/empty-detail-state"
 import { SummaryPanel } from "./detail-panels/summary-panel"
 import { RegistryPanel } from "./detail-panels/registry-panel"

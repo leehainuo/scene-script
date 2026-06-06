@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { CircleCheckBig, FileText, LayoutGrid, Wand2 } from "lucide-react"
-import { FloatingSaveButton } from "@/components/script-workshop/floating-save-button"
-import { GenerationOverlay } from "@/components/script-workshop/generation-overlay"
-import { RenameConfirmDialog } from "@/components/script-workshop/rename-confirm-dialog"
+import { FloatingSaveButton } from "@/pages/script-workshop/components/floating-save-button"
+import { GenerationOverlay } from "@/pages/script-workshop/components/generation-overlay"
+import { RenameConfirmDialog } from "@/pages/script-workshop/components/rename-confirm-dialog"
 import { AppSidebar } from "@/components/studio/app-sidebar"
 import {
   buildScriptConsistency,

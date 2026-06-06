@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { SegmentedToolbar } from "@/components/script-workshop/segmented-toolbar"
+import { SegmentedToolbar } from "@/pages/script-workshop/components/segmented-toolbar"
 import type { ResultView } from "@/lib/script-workshop"
 
 type ScriptDetailHeaderProps = {
