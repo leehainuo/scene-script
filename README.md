@@ -8,11 +8,12 @@ Scene Script 是一款面向小说作者、网文作者和非专业编剧的 **A
 
 ## 视频与文档
 
-> 请将最终路演视频上传到 `bilibili / 阿里云盘 / 夸克网盘` 等可公开访问平台，并把真实链接替换到下面这一行。评审通常会优先查看这里。
+### - Demo 视频链接：[即可前往](https://www.bilibili.com/video/BV1vWE46jEKk/?share_source=copy_web\&vd_source=3fe287c0ab8045331993b10155fd2235)
+- <https://www.bilibili.com/video/BV1vWE46jEKk/?share_source=copy_web&vd_source=3fe287c0ab8045331993b10155fd2235>
 
-- Demo 视频链接：`请替换为可直接访问的视频地址`
-- YAML Schema 文档：[详情入口](docs/schema/script-schema.md)
-- AI 转换链路说明文档：[详情入口](docs/script-convert-guide.md)
+### - YAML Schema 文档：[详情入口](docs/schema/script-schema.md)
+
+### -  AI 转换链路说明文档：[详情入口](docs/script-convert-guide.md)
 
 ## 题目对应
 
@@ -253,3 +254,4 @@ npm run dev
 cd frontend
 npm run build
 ```
+
