@@ -11,8 +11,8 @@ Scene Script 是一款面向小说作者、网文作者和非专业编剧的 **A
 > 请将最终路演视频上传到 `bilibili / 阿里云盘 / 夸克网盘` 等可公开访问平台，并把真实链接替换到下面这一行。评审通常会优先查看这里。
 
 - Demo 视频链接：`请替换为可直接访问的视频地址`
-- YAML Schema 文档：[详情入口](file:///Users/lihainuo/Develop/Code/Co/qiniuyun/scene-script/docs/schema/script-schema.md)
-- AI 转换链路说明文档：[详情入口](file:///Users/lihainuo/Develop/Code/Co/qiniuyun/scene-script/docs/script-convert-guide.md)
+- YAML Schema 文档：[详情入口](docs/schema/script-schema.md)
+- AI 转换链路说明文档：[详情入口](docs/script-convert-guide.md)
 
 ## 题目对应
 
@@ -127,7 +127,7 @@ consistency_report: {}
 - `chapters -> scenes -> beats`：把小说叙事拆成可继续打磨的剧本单元
 - `consistency_report`：把角色、地点、悬空引用问题显式暴露出来
 
-完整字段定义、校验规则和设计原因见 [script-schema.md](file:///Users/lihainuo/Develop/Code/Co/qiniuyun/scene-script/docs/schema/script-schema.md)。
+完整字段定义、校验规则和设计原因见 [script-schema.md](docs/schema/script-schema.md)。
 
 ## 项目结构
 
